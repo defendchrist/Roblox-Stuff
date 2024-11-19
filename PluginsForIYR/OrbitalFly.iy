@@ -1,17 +1,17 @@
--- This is an edit of the ported OrbitV2 code. It instead makes you orbit a part that flies by your control, used AI to make this sigma piece
+-- This is an edit of the ported OrbitFly code. It instead makes you orbit a part that flies by your control, used AI to make this sigma piece
 local plrs = game:GetService("Players")
 local rs = game:GetService("RunService")
 local Plugin = {
-  ["PluginName"] = "Orbit V2",
+  ["PluginName"] = "Orbit Fly",
   ["PluginDescription"] = "Orbits a player without ever needing to walk past through them.",
   ["Commands"] = {
-    ["orbitv2"] = {
-      ["ListName"] = "orbitv2 [player] [characterSpeed] [partSpeed] [distance] [height]",
+    ["orbitfly"] = {
+      ["ListName"] = "orbitfly [player] [characterSpeed] [partSpeed] [distance] [height]",
       ["Description"] = "Orbits a player with specified character speed, part speed, distance, and optional height.",
-      ["Aliases"] = {"ov2"},
+      ["Aliases"] = {"ofly"},
       ["Function"] = function(args, speaker)
         if #args < 4 then
-          notify("Usage: orbitv2 [player] [characterSpeed] [partSpeed] [distance] [height (optional)]")
+          notify("Usage: orbitfly [player] [characterSpeed] [partSpeed] [distance] [height (optional)]")
           return
         end
 
@@ -65,46 +65,4 @@ local Plugin = {
         speaker.Character.Humanoid.PlatformStand = true
 
         local sine = 0
-        local change = 1
-        local spin = 0
-        local spin2 = 0
-
-        local orbit = rs.RenderStepped:Connect(function()
-          sine = sine + change
-          spin2 = spin2 + 1
-          spin = spin + 1
-          -- Modify the CFrame calculation to include height
-          weld.C0 = CFrame.new(
-            distance * math.cos(sine / partSpeed), -- X position
-            height * math.sin(sine / partSpeed),   -- Y position (vertical orbit)
-            distance * math.sin(sine / partSpeed)   -- Z position
-          ) * CFrame.Angles(math.rad(0), math.rad(spin), math.rad(0))
-        end)
-
-        speaker.Character.Humanoid.Died:Connect(function()
-          orbit:Disconnect()
-        end)
-
-        target.Character.Humanoid.Died:Connect(function()
-          orbit:Disconnect()
-        end)
-      end
-    },
-    ["unorbitv2"] = {
-      ["ListName"] = "unorbitv2",
-      ["Description"] = "Unorbits the target and stops orbiting. Can be a failsafe",
-      ["Aliases"] = {"unov2"},
-      ["Function"] = function(args, speaker)
-        execCmd("unorbit")
-        for i, v in pairs(speaker.Character:GetDescendants()) do
-          if v.Name == "OrbitalDestructionPart" or v.Name == "OrbitalDestruction" then
-            v:Destroy()
-          end
-        end
-        speaker.Character.Humanoid.PlatformStand = false
-        speaker.Character.Humanoid.Sit = false
-      end
-    }
-  }
-}
-return Plugin
+        local ⬤
