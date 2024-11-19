@@ -1,4 +1,4 @@
--- This was ported from CMD-X to Infinite Yield Reborn I used an AI to format the plugin, so we're sigma.
+-- This is an edit of the ported OrbitV2 code. It instead makes you orbit a part that flies by your control, used AI to make this sigma piece
 local plrs = game:GetService("Players")
 local rs = game:GetService("RunService")
 local Plugin = {
@@ -6,12 +6,12 @@ local Plugin = {
   ["PluginDescription"] = "Orbits a player without ever needing to walk past through them.",
   ["Commands"] = {
     ["orbitv2"] = {
-      ["ListName"] = "orbitv2 [player] [speed] [distance] [height]",
-      ["Description"] = "Orbits a player with specified speed, distance, and optional height.",
+      ["ListName"] = "orbitv2 [player] [characterSpeed] [partSpeed] [distance] [height]",
+      ["Description"] = "Orbits a player with specified character speed, part speed, distance, and optional height.",
       ["Aliases"] = {"ov2"},
       ["Function"] = function(args, speaker)
-        if #args < 3 then
-          notify("Usage: orbitv2 [player] [speed] [distance] [height (optional)]")
+        if #args < 4 then
+          notify("Usage: orbitv2 [player] [characterSpeed] [partSpeed] [distance] [height (optional)]")
           return
         end
 
@@ -21,12 +21,13 @@ local Plugin = {
           return
         end
 
-        local speed = tonumber(args[2])
-        local distance = tonumber(args[3])
-        local height = args[4] and tonumber(args[4]) or 0 -- Default height to 0 if not provided
+        local characterSpeed = tonumber(args[2])
+        local partSpeed = tonumber(args[3])
+        local distance = tonumber(args[4])
+        local height = args[5] and tonumber(args[5]) or 0 -- Default height to 0 if not provided
 
-        if not speed or not distance then
-          notify("Invalid speed or distance")
+        if not characterSpeed or not partSpeed or not distance then
+          notify("Invalid character speed, part speed, or distance")
           return
         end
 
@@ -55,7 +56,7 @@ local Plugin = {
         rp.Parent = speaker.Character.HumanoidRootPart
         rp.CartoonFactor = 0.6
         rp.MaxThrust = 5000
-        rp.MaxSpeed = speed
+        rp.MaxSpeed = characterSpeed -- Use character speed for the propulsion
         rp.ThrustP = 5000
         rp.Name = "OrbitalDestructionPart"
         rp.Target = part
@@ -74,9 +75,9 @@ local Plugin = {
           spin = spin + 1
           -- Modify the CFrame calculation to include height
           weld.C0 = CFrame.new(
-            distance * math.cos(sine / 10), -- X position
-            height * math.sin(sine / 10),   -- Y position (vertical orbit)
-            distance * math.sin(sine / 10)   -- Z position
+            distance * math.cos(sine / partSpeed), -- X position
+            height * math.sin(sine / partSpeed),   -- Y position (vertical orbit)
+            distance * math.sin(sine / partSpeed)   -- Z position
           ) * CFrame.Angles(math.rad(0), math.rad(spin), math.rad(0))
         end)
 

@@ -1,0 +1,37 @@
+-- made with the help of Hydrax (Discord: 1103439326974578750) and !wowzers (Discord: 1146548445293858898)
+local Plugin = {
+	["PluginName"] = "Sword Kill", -- Change this to your plugin's name
+	["PluginDescription"] = "Moves the sword handle onto your target and kills them", -- Change this to your plugin's description
+	["Commands"] = {
+		["SwordKill"] = { -- Change this to your command name
+			["ListName"] = "swordkill [target]", -- Change this to your command usage
+			["Description"] = "Equips your sword and teleports your handle to your target and killing them", -- Change this to your command description
+			["Aliases"] = {"sk"}, -- Add any aliases for your command
+			["Function"] = function(args, speaker)
+				-- Command implementation goes here
+				if #args < 1 then
+					notify("Usage: swordkill [args]") -- Update usage message
+					return
+				end
+
+				-- Example: Get the player
+				local playerName = args[1]
+				local targetPlayer = Players:FindFirstChild(playerName)
+
+				if not targetPlayer then
+					notify("Player not found") -- Update notification message
+					return
+				end
+				
+				local oldcframe = game.Players.LocalPlayer.Character:FindFirstChildWhichIsA("Tool").Handle.CFrame
+				repeat
+					game.Players.LocalPlayer.Character:FindFirstChildWhichIsA("Tool").Handle.CFrame = targetPlayer.Character.HumanoidRootPart.CFrame
+					wait()
+				until targetPlayer.Character.Humanoid.Health == 0
+				game.Players.LocalPlayer.Character:FindFirstChildWhichIsA("Tool").Handle.CFrame = oldcframe
+				
+			end
+		}
+	}
+}
+return Plugin
