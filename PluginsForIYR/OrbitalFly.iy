@@ -1,68 +1,139 @@
--- This is an edit of the ported OrbitFly code. It instead makes you orbit a part that flies by your control, used AI to make this sigma piece
 local plrs = game:GetService("Players")
 local rs = game:GetService("RunService")
+local uis = game:GetService("UserInputService")
+local workspace = game:GetService("Workspace")
+
 local Plugin = {
-  ["PluginName"] = "Orbit Fly",
-  ["PluginDescription"] = "Orbits a player without ever needing to walk past through them.",
-  ["Commands"] = {
-    ["orbitfly"] = {
-      ["ListName"] = "orbitfly [player] [characterSpeed] [partSpeed] [distance] [height]",
-      ["Description"] = "Orbits a player with specified character speed, part speed, distance, and optional height.",
-      ["Aliases"] = {"ofly"},
-      ["Function"] = function(args, speaker)
-        if #args < 4 then
-          notify("Usage: orbitfly [player] [characterSpeed] [partSpeed] [distance] [height (optional)]")
-          return
-        end
+    ["PluginName"] = "Orbital Fly",
+    ["PluginDescription"] = "Orbits around a floating part that you can control. Camera attaches to the part.",
+    ["Commands"] = {
+        ["orbitalfly"] = {
+            ["ListName"] = "orbitalfly [speed] [partspeed] [x, y, z]",
+            ["Description"] = "Creates a part and orbits around it. Camera attaches to the part. Control with WASD, QE for up/down",
+            ["Aliases"] = {"of"},
+            ["Function"] = function(args, speaker)
+                if #args < 5 then
+                    notify("Usage: orbitalfly [speed] [partspeed] [x, y, z]")
+                    return
+                end
 
-        local players = getPlayer(args[1], speaker)
-        if #players == 0 then
-          notify("Player not found")
-          return
-        end
+                local settings = {
+                  ["Speed"] = tonumber(args[1]),
+                  ["PartSpeed"] = tonumber(args[2]),
+                  ["X"] = tonumber(args[3]),
+                  ["Y"] = tonumber(args[4]),
+                  ["Z"] = tonumber(args[5])
+                } -- settings["Speed"]
+                
+                if not settings["Speed"] or not settings["PartSpeed"] then
+                    notify("Invalid speed or part speed")
+                    return
+                end
 
-        local characterSpeed = tonumber(args[2])
-        local partSpeed = tonumber(args[3])
-        local distance = tonumber(args[4])
-        local height = args[5] and tonumber(args[5]) or 0 -- Default height to 0 if not provided
+                -- Create the control part
+                local part = Instance.new("Part")
+                part.Transparency = 0.5  -- Semi-transparent for visibility
+                part.Name = "OrbitControl"
+                part.Size = Vector3.new(2, 2, 2)
+                part.Massless = true  -- Make the part weightless
+                part.CanCollide = false
+                part.Anchored = false  -- No longer anchored to allow movement
+                part.Position = speaker.Character.HumanoidRootPart.Position + Vector3.new(0, 5, 0)
+                part.Parent = workspace
 
-        if not characterSpeed or not partSpeed or not distance then
-          notify("Invalid character speed, part speed, or distance")
-          return
-        end
+                -- Create BodyVelocity for controlled movement
+                local bodyVelocity = Instance.new("BodyVelocity")
+                bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+                bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                bodyVelocity.Parent = part
 
-        local target = plrs[players[1]]
-        local targethrp = target.Character:FindFirstChild("HumanoidRootPart")
+                -- Rocket propulsion setup
+                local rp = Instance.new("RocketPropulsion")
+                rp.Parent = speaker.Character.HumanoidRootPart
+                rp.CartoonFactor = 0.6
+                rp.MaxThrust = 5000
+                rp.MaxSpeed = settings["Speed"]
+                rp.ThrustP = 5000
+                rp.Name = "OrbitalDestructionPart"
+                rp.Target = part
+                rp:Fire()
 
-        if not targethrp then
-          notify("Target's character does not have a root part")
-          return
-        end
+                speaker.Character.Humanoid.PlatformStand = true
 
-        local part = Instance.new("Part")
-        part.Transparency = 1
-        part.Name = "ThePart"
-        part.Size = Vector3.new(1.7, 1.7, 1.7)
-        part.Massless = true
-        part.CanCollide = false
-        part.Parent = target.Character
+                -- Attach camera to the part
+                local camera = workspace.CurrentCamera
+                camera.CameraSubject = part
+                camera.CameraType = Enum.CameraType.Track
 
-        local weld = Instance.new("Weld")
-        weld.Part1 = targethrp
-        weld.Part0 = part
-        weld.Parent = part
+                local movementSpeed = settings["PartSpeed"]
 
-        local rp = Instance.new("RocketPropulsion")
-        rp.Parent = speaker.Character.HumanoidRootPart
-        rp.CartoonFactor = 0.6
-        rp.MaxThrust = 5000
-        rp.MaxSpeed = characterSpeed -- Use character speed for the propulsion
-        rp.ThrustP = 5000
-        rp.Name = "OrbitalDestructionPart"
-        rp.Target = part
-        rp:Fire()
+                -- Part movement control
+                local function handleMovement()
+                    local moveDirection = Vector3.new(0, 0, 0)
+                    
+                    if uis:IsKeyDown(Enum.KeyCode.W) then
+                        moveDirection = moveDirection + camera.CFrame.LookVector * movementSpeed
+                    end
+                    if uis:IsKeyDown(Enum.KeyCode.S) then
+                        moveDirection = moveDirection - camera.CFrame.LookVector * movementSpeed
+                    end
+                    if uis:IsKeyDown(Enum.KeyCode.A) then
+                        moveDirection = moveDirection - camera.CFrame.RightVector * movementSpeed
+                    end
+                    if uis:IsKeyDown(Enum.KeyCode.D) then
+                        moveDirection = moveDirection + camera.CFrame.RightVector * movementSpeed
+                    end
+                    if uis:IsKeyDown(Enum.KeyCode.E) then
+                        moveDirection = moveDirection + Vector3.new(0, movementSpeed, 0)
+                    end
+                    if uis:IsKeyDown(Enum.KeyCode.Q) then
+                        moveDirection = moveDirection - Vector3.new(0, movementSpeed, 0)
+                    end
 
-        speaker.Character.Humanoid.PlatformStand = true
+                    bodyVelocity.Velocity = moveDirection
+                end
 
-        local sine = 0
-        local ⬤
+                -- Orbit logic
+                local orbit = rs.RenderStepped:Connect(function()
+                    handleMovement()
+                end)
+
+                -- Cleanup on character death
+                speaker.Character.Humanoid.Died:Connect(function()
+                    orbit:Disconnect()
+                    part:Destroy()
+                    camera.CameraType = Enum.CameraType.Custom
+                end)
+
+                -- Store the part reference for cleanup
+                _G.OrbitControlPart = part
+            end
+        },
+        ["unorbitalfly"] = {
+            ["ListName"] = "unorbitalfly",
+            ["Description"] = "Stops orbiting and removes the control part",
+            ["Aliases"] = {"unof"},
+            ["Function"] = function(args, speaker)
+                local camera = workspace.CurrentCamera
+                
+                if _G.OrbitControlPart then
+                    _G.OrbitControlPart:Destroy()
+                    _G.OrbitControlPart = nil
+                end
+                
+                for i, v in pairs(speaker.Character:GetDescendants()) do
+                    if v.Name == "OrbitalDestructionPart" or v.Name == "OrbitalDestruction" then
+                        v:Destroy()
+                    end
+                end
+                
+                speaker.Character.Humanoid.PlatformStand = false
+                speaker.Character.Humanoid.Sit = false
+                camera.CameraType = Enum.CameraType.Custom
+                camera.CameraSubject = speaker.Character.Humanoid
+            end
+        }
+    }
+}
+
+return Plugin
