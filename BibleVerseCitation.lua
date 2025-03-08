@@ -1,5 +1,16 @@
--- I completely prompted, error handled, and tested this with perplexity AI as my IDE of sorts since I do not have access to my PC ivo been kinda forced to resort to AI helping farmulate my ideas 
--- This was well worth it and I love it I also take suggestions on discord my discord is defendchrist
+-- Toggle debug mode (set to true to enable debug/error messages, false to disable)
+local debugMode = false
+
+-- Function to handle debug and error messages
+local function debugPrint(message, isError)
+    if debugMode then
+        if isError then
+            warn("[ERROR] " .. message) -- Use warn() for errors
+        else
+            print("[DEBUG] " .. message) -- Use print() for debug messages
+        end
+    end
+end
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -18,10 +29,9 @@ end
 
 -- Function to fetch Bible verse(s) using an HTTP request
 local function fetchBibleVerses(reference)
-    -- Correctly encode the reference for the URL
     local encodedReference = string.gsub(reference, " ", "+")
     local url = "https://bible-api.com/" .. encodedReference .. "?translation=kjv"
-    print("[DEBUG] Fetching Bible verses from URL: " .. url)
+    debugPrint("Fetching Bible verses from URL: " .. url)
 
     local success, response = pcall(function()
         return httpRequest({
@@ -33,14 +43,14 @@ local function fetchBibleVerses(reference)
     if success and response.StatusCode == 200 then
         local decodedResponse = HttpService:JSONDecode(response.Body)
         if decodedResponse and decodedResponse.text then
-            print("[DEBUG] Successfully fetched response from API")
+            debugPrint("Successfully fetched response from API")
             return decodedResponse.text
         else
-            warn("[ERROR] Verse not found or invalid response format.")
+            debugPrint("Verse not found or invalid response format.", true)
             return "Verse not found."
         end
     else
-        warn("[ERROR] Failed to fetch verses: " .. tostring(response))
+        debugPrint("Failed to fetch verses: " .. tostring(response), true)
         return "Error fetching verses."
     end
 end
@@ -53,6 +63,7 @@ local function splitText(text, limit)
         text = string.sub(text, limit + 1)
     end
     table.insert(chunks, text)
+    debugPrint("Text successfully split into " .. #chunks .. " chunk(s)")
     return chunks
 end
 
@@ -60,7 +71,7 @@ end
 local function sendChatMessages(messages)
     for i, message in ipairs(messages) do
         task.wait(MESSAGE_INTERVAL * (i - 1))
-        print("[DEBUG] Sending message chunk: " .. message)
+        debugPrint("Sending message chunk: " .. message)
 
         local textChannel = TextChatService.TextChannels.RBXGeneral
         if textChannel then
@@ -79,10 +90,10 @@ end
 
 -- Listen for chat messages from the local player only
 Players.LocalPlayer.Chatted:Connect(function(message)
-    print("[DEBUG] Message received from LocalPlayer: " .. message)
+    debugPrint("Message received from LocalPlayer: " .. message)
 
     if isValidBibleReference(message) then
-        print("[DEBUG] Valid Bible reference detected: " .. message)
+        debugPrint("Valid Bible reference detected: " .. message)
 
         local verseText = fetchBibleVerses(message)
 
@@ -90,11 +101,11 @@ Players.LocalPlayer.Chatted:Connect(function(message)
             local chunks = splitText(verseText, CHAT_LIMIT)
             sendChatMessages(chunks)
         else
-            warn("[ERROR] Verse text is nil or empty!")
+            debugPrint("Verse text is nil or empty!", true)
         end
     else
-        print("[DEBUG] Message did not match a valid Bible reference pattern")
+        debugPrint("Message did not match a valid Bible reference pattern")
     end
 end)
 
-print("[DEBUG] Client-side script loaded successfully")
+debugPrint("Client-side script loaded successfully")
