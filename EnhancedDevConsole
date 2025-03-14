@@ -1,81 +1,102 @@
--- Roblox DevConsole click-to-copy injector with notifications
-local function enhanceConsole()
-    local CoreGui = game:GetService("CoreGui")
-    local StarterGui = game:GetService("StarterGui")
-    local console
-    
-    -- Locate DevConsoleMaster
-    repeat wait(0.1) until CoreGui:FindFirstChild("DevConsoleMaster")
-    console = CoreGui.DevConsoleMaster
-    
-    local window = console:WaitForChild("DevConsoleWindow", 5)
-    local ui = window:WaitForChild("DevConsoleUI", 5)
-    local mainView = ui:WaitForChild("MainView", 5)
-    local clientLog = mainView:WaitForChild("ClientLog", 5)
-    
-    if not clientLog then
-        warn("ClientLog not found. Check console structure.")
-        return
-    end
-    
-    -- Track processed logs
-    local processed = {}
-    
-    -- Function to enhance logs with copy and notification
-    local function enhanceLog(logItem)
-        if processed[logItem] then return end
-        local msg = logItem:FindFirstChild("msg")
-        if msg and msg:IsA("TextLabel") then
-            processed[logItem] = true
-            -- Click to copy with notification
-            msg.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    local success, err = pcall(function()
-                        setclipboard(msg.Text)
+-- Roblox DevConsole click-to-copy injector with full persistence
+local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui")
+
+-- Function to enhance a single log
+local function enhanceLog(logItem, processed)
+    if processed[logItem] then return end
+    local msg = logItem:FindFirstChild("msg")
+    if msg and msg:IsA("TextLabel") then
+        processed[logItem] = true
+        -- Click to copy with notification
+        msg.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                local success, err = pcall(function()
+                    setclipboard(msg.Text)
+                end)
+                if success then
+                    pcall(function()
+                        StarterGui:SetCore("SendNotification", {
+                            Title = "Copied!",
+                            Text = "Log copied: " .. msg.Text:sub(1, 50) .. (#msg.Text > 50 and "..." or ""),
+                            Duration = 2
+                        })
                     end)
-                    if success then
-                        pcall(function()
-                            StarterGui:SetCore("SendNotification", {
-                                Title = "Copied!",
-                                Text = "Log copied to clipboard: " .. msg.Text:sub(1, 50) .. (#msg.Text > 50 and "..." or ""),
-                                Duration = 2
-                            })
-                        end)
-                    else
-                        warn("Clipboard error: " .. err)
-                    end
+                else
+                    warn("Clipboard error: " .. err)
                 end
-            end)
-            -- Highlight on hover
-            msg.MouseEnter:Connect(function()
-                msg.TextColor3 = Color3.fromRGB(255, 0, 0)
-            end)
-            msg.MouseLeave:Connect(function()
-                msg.TextColor3 = Color3.fromRGB(255, 255, 255)
-            end)
-            msg.Selectable = true
-            msg.TextTruncate = Enum.TextTruncate.None
-        end
+            end
+        end)
+        -- Highlight on hover
+        msg.MouseEnter:Connect(function()
+            msg.TextColor3 = Color3.fromRGB(255, 0, 0)
+        end)
+        msg.MouseLeave:Connect(function()
+            msg.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end)
+        msg.Selectable = true
+        msg.TextTruncate = Enum.TextTruncate.None
     end
-    
-    -- Enhance existing logs
-    for _, item in pairs(clientLog:GetChildren()) do
-        if item:IsA("Frame") then enhanceLog(item) end
-    end
-    
-    -- Hook new logs
-    clientLog.ChildAdded:Connect(function(child)
-        if child:IsA("Frame") then
-            wait(0.01)
-            enhanceLog(child)
-        end
-    end)
-    
-    print("Console has been enhanced. Hover over a message and it will highlight in red, click to copy and you should recieve a notification.")
 end
 
--- Run it
+-- Function to process all logs in clientLog
+local function processLogs(clientLog, processed)
+    for _, item in pairs(clientLog:GetChildren()) do
+        if item:IsA("Frame") and not processed[item] then
+            enhanceLog(item, processed)
+        end
+    end
+end
+
+-- Main persistence loop
+local function monitorConsole()
+    local lastClientLog = nil
+    local processed = {} -- Global processed table to track across reopens
+    
+    while true do
+        local console = CoreGui:FindFirstChild("DevConsoleMaster")
+        if console then
+            local window = console:FindFirstChild("DevConsoleWindow") or console:WaitForChild("DevConsoleWindow", 5)
+            local ui = window and (window:FindFirstChild("DevConsoleUI") or window:WaitForChild("DevConsoleUI", 5))
+            local mainView = ui and (ui:FindFirstChild("MainView") or ui:WaitForChild("MainView", 5))
+            local clientLog = mainView and (mainView:FindFirstChild("ClientLog") or mainView:WaitForChild("ClientLog", 5))
+            
+            if clientLog and clientLog ~= lastClientLog then
+                -- New or different ClientLog instance, reapply enhancements
+                processLogs(clientLog, processed)
+                
+                -- Disconnect any old ChildAdded connection and set a new one
+                if lastClientLog then
+                    pcall(function() lastClientLog.ChildAdded:Disconnect() end)
+                end
+                clientLog.ChildAdded:Connect(function(child)
+                    if child:IsA("Frame") then
+                        task.wait(0.01)
+                        enhanceLog(child, processed)
+                    end
+                end)
+                
+                lastClientLog = clientLog
+            elseif clientLog then
+                -- Same ClientLog, just process any new logs
+                processLogs(clientLog, processed)
+            else
+                warn("ClientLog not found. Waiting for console structure...")
+            end
+        else
+            -- Console gone, reset lastClientLog to force re-enhancement on reopen
+            lastClientLog = nil
+        end
+        task.wait(0.5) -- Check twice a second for responsiveness
+    end
+end
+
+-- Start the monitor
 spawn(function()
-    local ok, err = pcall(enhanceConsole)
-    if not ok then warn("Error: " .. err) end
+    local ok, err = pcall(monitorConsole)
+    if not ok then
+        warn("Monitor error: " .. err)
+    end
 end)
+
+print("Console Enhancement is activated 🙏(^///^)☦")
