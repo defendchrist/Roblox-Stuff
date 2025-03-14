@@ -1,45 +1,59 @@
--- Roblox DevConsole click-to-copy injector with full persistence
+-- Roblox DevConsole click-to-copy injector with full persistence, instance replacement, and original color preservation
 local CoreGui = game:GetService("CoreGui")
 local StarterGui = game:GetService("StarterGui")
 
--- Function to enhance a single log
+-- Unique identifier for this script instance
+local SCRIPT_ID = "ConsoleEnhancer_" .. tostring(math.random(100000, 999999))
+
+-- Stop any existing instance
+local function stopOldInstance()
+    local oldInstanceId = CoreGui:FindFirstChild("ConsoleEnhancerInstanceId")
+    if oldInstanceId and oldInstanceId:IsA("StringValue") then
+        if oldInstanceId.Value ~= SCRIPT_ID then
+            oldInstanceId.Value = "STOP"
+            task.wait(0.1)
+        end
+        oldInstanceId:Destroy() -- Ensure old instance is fully removed
+    end
+end
+
+-- Create or update instance ID
+local function setInstanceId()
+    local instanceId = Instance.new("StringValue")
+    instanceId.Name = "ConsoleEnhancerInstanceId"
+    instanceId.Value = SCRIPT_ID
+    instanceId.Parent = CoreGui
+    return instanceId
+end
+
+-- Enhance log items
 local function enhanceLog(logItem, processed)
     if processed[logItem] then return end
     local msg = logItem:FindFirstChild("msg")
     if msg and msg:IsA("TextLabel") then
         processed[logItem] = true
-        -- Click to copy with notification
+        local originalColor = msg.TextColor3
         msg.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                local success, err = pcall(function()
-                    setclipboard(msg.Text)
-                end)
-                if success then
-                    pcall(function()
-                        StarterGui:SetCore("SendNotification", {
-                            Title = "Copied!",
-                            Text = "Log copied: " .. msg.Text:sub(1, 50) .. (#msg.Text > 50 and "..." or ""),
-                            Duration = 2
-                        })
-                    end)
-                else
-                    warn("Clipboard error: " .. err)
-                end
+                pcall(setclipboard, msg.Text)
+                pcall(StarterGui.SetCore, StarterGui, "SendNotification", {
+                    Title = "Copied!",
+                    Text = "Log copied: " .. msg.Text:sub(1, 50) .. (#msg.Text > 50 and "..." or ""),
+                    Duration = 2
+                })
             end
         end)
-        -- Highlight on hover
         msg.MouseEnter:Connect(function()
             msg.TextColor3 = Color3.fromRGB(255, 0, 0)
         end)
         msg.MouseLeave:Connect(function()
-            msg.TextColor3 = Color3.fromRGB(255, 255, 255)
+            msg.TextColor3 = originalColor
         end)
         msg.Selectable = true
-        msg.TextTruncate = Enum.TextTruncate.None
     end
 end
 
--- Function to process all logs in clientLog
+-- Process logs in ClientLog
 local function processLogs(clientLog, processed)
     for _, item in pairs(clientLog:GetChildren()) do
         if item:IsA("Frame") and not processed[item] then
@@ -48,55 +62,43 @@ local function processLogs(clientLog, processed)
     end
 end
 
--- Main persistence loop
-local function monitorConsole()
-    local lastClientLog = nil
-    local processed = {} -- Global processed table to track across reopens
-    
-    while true do
+-- Monitor DevConsole for ClientLog
+local function monitorConsole(instanceId)
+    local lastClientLog, processed, connection = nil, {}, nil
+    while instanceId.Value == SCRIPT_ID do
         local console = CoreGui:FindFirstChild("DevConsoleMaster")
         if console then
-            local window = console:FindFirstChild("DevConsoleWindow") or console:WaitForChild("DevConsoleWindow", 5)
-            local ui = window and (window:FindFirstChild("DevConsoleUI") or window:WaitForChild("DevConsoleUI", 5))
-            local mainView = ui and (ui:FindFirstChild("MainView") or ui:WaitForChild("MainView", 5))
-            local clientLog = mainView and (mainView:FindFirstChild("ClientLog") or mainView:WaitForChild("ClientLog", 5))
+            local window = console:FindFirstChild("DevConsoleWindow")
+            local ui = window and window:FindFirstChild("DevConsoleUI")
+            local mainView = ui and ui:FindFirstChild("MainView")
+            local clientLog = mainView and mainView:FindFirstChild("ClientLog")
             
             if clientLog and clientLog ~= lastClientLog then
-                -- New or different ClientLog instance, reapply enhancements
                 processLogs(clientLog, processed)
-                
-                -- Disconnect any old ChildAdded connection and set a new one
-                if lastClientLog then
-                    pcall(function() lastClientLog.ChildAdded:Disconnect() end)
-                end
-                clientLog.ChildAdded:Connect(function(child)
+                if connection then connection:Disconnect() end
+                connection = clientLog.ChildAdded:Connect(function(child)
                     if child:IsA("Frame") then
                         task.wait(0.01)
                         enhanceLog(child, processed)
                     end
                 end)
-                
                 lastClientLog = clientLog
             elseif clientLog then
-                -- Same ClientLog, just process any new logs
                 processLogs(clientLog, processed)
-            else
-                warn("ClientLog not found. Waiting for console structure...")
             end
         else
-            -- Console gone, reset lastClientLog to force re-enhancement on reopen
-            lastClientLog = nil
+            if connection then connection:Disconnect() end
+            lastClientLog, connection = nil, nil
         end
-        task.wait(0.5) -- Check twice a second for responsiveness
+        task.wait(1) -- Reduced frequency to avoid spam
     end
 end
 
--- Start the monitor
+-- Main execution
+stopOldInstance()
+local instanceId = setInstanceId()
 spawn(function()
-    local ok, err = pcall(monitorConsole)
-    if not ok then
-        warn("Monitor error: " .. err)
-    end
+    local ok, err = pcall(function() monitorConsole(instanceId) end)
+    if not ok then warn("Monitor error: " .. err) end
 end)
-
-print("Console Enhancement is activated 🙏(^///^)☦")
+print("Console Enhancement activated - Instance ID: " .. SCRIPT_ID)
