@@ -1,6 +1,18 @@
 -- Toggle debug mode (set to true to enable debug/error messages, false to disable)
 local debugMode = true
 
+-- Prevent duplicate execution by removing old script instance
+if getgenv().BibleScript then
+    getgenv().BibleScript:Disconnect()
+    getgenv().BibleScript = nil
+end
+
+-- Constants
+local CHAT_LIMIT = 200
+local MESSAGE_INTERVAL = 2
+local BIBLE_VERSION = "en-dra" -- Change this to switch versions
+local HTTP_URL = "https://cdn.jsdelivr.net/gh/wldeh/bible-api/bibles/" .. BIBLE_VERSION .. "/books/"
+
 -- Function to handle debug and error messages
 local function debugPrint(message, isError)
     if debugMode then
@@ -12,30 +24,30 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 
--- Constants
-local CHAT_LIMIT = 200
-local MESSAGE_INTERVAL = 2
-local HTTP_URL = "https://bible-api.com/"
-
 -- Detect supported HTTP request function
 local httpRequest = syn and syn.request or http_request or request
 if not httpRequest then error("HTTP request function not supported by this executor.") end
 
--- Function to fetch Bible verse(s) using an HTTP request
-local function fetchBibleVerses(reference)
-    local url = HTTP_URL .. string.gsub(reference, " ", "+") .. "?translation=kjv"
-    debugPrint("Fetching Bible verses from URL: " .. url)
-    
-    local success, response = pcall(function()
-        return httpRequest({ Url = url, Method = "GET" })
-    end)
-
-    if success and response and response.StatusCode == 200 then
-        local decoded = HttpService:JSONDecode(response.Body)
-        return decoded and decoded.text or "Verse not found."
+-- Function to fetch multiple Bible verses
+local function fetchBibleVerses(book, chapter, verses)
+    local collectedVerses = ""
+    for verse in verses:gmatch("%d+") do
+        local url = HTTP_URL .. book .. "/chapters/" .. chapter .. "/verses/" .. verse .. ".json"
+        debugPrint("Fetching Bible verse from URL: " .. url)
+        
+        local success, response = pcall(function()
+            return httpRequest({ Url = url, Method = "GET" })
+        end)
+        
+        if success and response and response.StatusCode == 200 then
+            local decoded = HttpService:JSONDecode(response.Body)
+            collectedVerses = collectedVerses .. (decoded and decoded.text or "Verse not found.") .. " "
+        else
+            debugPrint("Failed to fetch verse " .. verse, true)
+            collectedVerses = collectedVerses .. "Error fetching verse " .. verse .. ". "
+        end
     end
-    debugPrint("Failed to fetch verses", true)
-    return "Error fetching verses."
+    return collectedVerses
 end
 
 -- Function to split text into smaller chunks for Roblox chat
@@ -64,33 +76,18 @@ local function sendChatMessages(messages)
     end
 end
 
--- Nicene Creed text
-local niceneCreedText = [[I believe in one God, Father Almighty, Creator of heaven and earth, and of all things visible and invisible.
-
-And in one Lord Jesus Christ, the only-begotten Son of God, begotten of the Father before all ages; Light of Light, true God of true God, begotten, not created, of one essence with the Father through Whom all things were made. Who for us men and for our salvation came down from heaven and was incarnate of the Holy Spirit and the Virgin Mary and became man. He was crucified for us under Pontius Pilate, and suffered and was buried; And He rose on the third day, according to the Scriptures. He ascended into heaven and is seated at the right hand of the Father; And He will come again with glory to judge the living and dead. His kingdom shall have no end.
-
-And in the Holy Spirit, the Lord, the Creator of life, Who proceeds from the Father, Who together with the Father and the Son is worshipped and glorified, Who spoke through the prophets.
-
-In one, holy, catholic, and apostolic Church.
-
-I confess one baptism for the forgiveness of sins.
-
-I look for the resurrection of the dead, and the life of the age to come.
-
-Amen.]]
-
 -- Function to check if a message is a valid Bible reference
 local function isValidBibleReference(message)
     return message:lower():match("^%d?%s?%w+%s%d+:%d+[-,%d]*$") ~= nil
 end
 
 -- Listen for chat messages from the local player
-Players.LocalPlayer.Chatted:Connect(function(message)
+getgenv().BibleScript = Players.LocalPlayer.Chatted:Connect(function(message)
     debugPrint("Message received: " .. message)
-    if message == "The Nicene Creed" then
-        sendChatMessages(splitText(niceneCreedText))
-    elseif isValidBibleReference(message) then
-        sendChatMessages(splitText(fetchBibleVerses(message)))
+    local book, chapter, verses = message:match("(.-)%s(%d+):([%d,-]+)")
+    
+    if book and chapter and verses then
+        sendChatMessages(splitText(fetchBibleVerses(book:lower(), chapter, verses)))
     else
         debugPrint("Unrecognized message")
     end
