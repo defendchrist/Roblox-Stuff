@@ -1,0 +1,81 @@
+-- Roblox DevConsole click-to-copy injector with notifications
+local function enhanceConsole()
+    local CoreGui = game:GetService("CoreGui")
+    local StarterGui = game:GetService("StarterGui")
+    local console
+    
+    -- Locate DevConsoleMaster
+    repeat wait(0.1) until CoreGui:FindFirstChild("DevConsoleMaster")
+    console = CoreGui.DevConsoleMaster
+    
+    local window = console:WaitForChild("DevConsoleWindow", 5)
+    local ui = window:WaitForChild("DevConsoleUI", 5)
+    local mainView = ui:WaitForChild("MainView", 5)
+    local clientLog = mainView:WaitForChild("ClientLog", 5)
+    
+    if not clientLog then
+        warn("ClientLog not found. Check console structure.")
+        return
+    end
+    
+    -- Track processed logs
+    local processed = {}
+    
+    -- Function to enhance logs with copy and notification
+    local function enhanceLog(logItem)
+        if processed[logItem] then return end
+        local msg = logItem:FindFirstChild("msg")
+        if msg and msg:IsA("TextLabel") then
+            processed[logItem] = true
+            -- Click to copy with notification
+            msg.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    local success, err = pcall(function()
+                        setclipboard(msg.Text)
+                    end)
+                    if success then
+                        pcall(function()
+                            StarterGui:SetCore("SendNotification", {
+                                Title = "Copied!",
+                                Text = "Log copied to clipboard: " .. msg.Text:sub(1, 50) .. (#msg.Text > 50 and "..." or ""),
+                                Duration = 2
+                            })
+                        end)
+                    else
+                        warn("Clipboard error: " .. err)
+                    end
+                end
+            end)
+            -- Highlight on hover
+            msg.MouseEnter:Connect(function()
+                msg.TextColor3 = Color3.fromRGB(255, 0, 0)
+            end)
+            msg.MouseLeave:Connect(function()
+                msg.TextColor3 = Color3.fromRGB(255, 255, 255)
+            end)
+            msg.Selectable = true
+            msg.TextTruncate = Enum.TextTruncate.None
+        end
+    end
+    
+    -- Enhance existing logs
+    for _, item in pairs(clientLog:GetChildren()) do
+        if item:IsA("Frame") then enhanceLog(item) end
+    end
+    
+    -- Hook new logs
+    clientLog.ChildAdded:Connect(function(child)
+        if child:IsA("Frame") then
+            wait(0.01)
+            enhanceLog(child)
+        end
+    end)
+    
+    print("Console has been enhanced. Hover over a message and it will highlight in red, click to copy and you should recieve a notification.")
+end
+
+-- Run it
+spawn(function()
+    local ok, err = pcall(enhanceConsole)
+    if not ok then warn("Error: " .. err) end
+end)
