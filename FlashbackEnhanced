@@ -1,0 +1,130 @@
+-- Toggle debug mode (set to true to enable debug/error messages, false to disable)
+local debugMode = true
+
+-- Prevent duplicate execution by removing old script instance
+if getgenv().BibleScript then
+    getgenv().BibleScript:Disconnect()
+    getgenv().BibleScript = nil
+end
+
+-- Constants
+local CHAT_LIMIT = 200
+local MESSAGE_INTERVAL = 1
+local BIBLE_VERSION = "en-dra" -- Change this to switch versions
+local HTTP_URL = "https://cdn.jsdelivr.net/gh/wldeh/bible-api/bibles/" .. BIBLE_VERSION .. "/books/"
+
+-- Dictionary of phrases and their corresponding text files
+-- Add or modify entries here for easy configuration
+local phraseToFile = {
+    ["The Nicene Creed"] = "TheNiceneCreed.txt",
+	["The Lords Prayer"] = "TheLordsPrayer.txt",
+	["A Prayer for All Times"] = "aPrayerForAllTimes.txt",
+    -- Add more entries as needed, for example:
+    -- ["the lord's prayer"] = "lords_prayer.txt",
+    -- ["the apostles' creed"] = "apostles_creed.txt"
+}
+
+-- Function to handle debug and error messages
+local function debugPrint(message, isError)
+    if debugMode then
+        (isError and warn or print)("[" .. (isError and "ERROR" or "DEBUG") .. "] " .. message)
+    end
+end
+
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local TextChatService = game:GetService("TextChatService")
+
+-- Detect supported HTTP request function
+local httpRequest = syn and syn.request or http_request or request
+if not httpRequest then error("HTTP request function not supported by this executor.") end
+
+-- Function to fetch multiple Bible verses
+local function fetchBibleVerses(book, chapter, verses)
+    local collectedVerses = ""
+    for verse in verses:gmatch("%d+") do
+        local url = HTTP_URL .. book .. "/chapters/" .. chapter .. "/verses/" .. verse .. ".json"
+        debugPrint("Fetching Bible verse from URL: " .. url)
+        
+        local success, response = pcall(function()
+            return httpRequest({ Url = url, Method = "GET" })
+        end)
+        
+        if success and response and response.StatusCode == 200 then
+            local decoded = HttpService:JSONDecode(response.Body)
+            collectedVerses = collectedVerses .. (decoded and decoded.text or "Verse not found.") .. " "
+        else
+            debugPrint("Failed to fetch verse " .. verse, true)
+            collectedVerses = collectedVerses .. "Error fetching verse " .. verse .. ". "
+        end
+    end
+    return collectedVerses
+end
+
+-- Function to split text into smaller chunks for Roblox chat
+local function splitText(text)
+    local chunks, len = {}, #text
+    for i = 1, len, CHAT_LIMIT do
+        table.insert(chunks, text:sub(i, i + CHAT_LIMIT - 1))
+    end
+    return chunks
+end
+
+-- Function to send messages in Roblox chat with intervals
+local function sendChatMessages(messages)
+    local textChannel = TextChatService:FindFirstChild("TextChannels") and TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+    for i, message in ipairs(messages) do
+        task.delay(MESSAGE_INTERVAL * (i - 1), function()
+            debugPrint("Sending message chunk: " .. message)
+            pcall(function()
+                if textChannel then
+                    textChannel:SendAsync(message)
+                else
+                    Players.LocalPlayer:Chat(message)
+                end
+            end)
+        end)
+    end
+end
+
+-- Function to check if a message is a valid Bible reference
+local function isValidBibleReference(message)
+    return message:lower():match("^%d?%s?%w+%s%d+:%d+[-,%d]*$") ~= nil
+end
+
+-- Function to send text file content as chat message
+local function sendTextFileContent(fileName)
+    local success, file = pcall(readfile, fileName)
+    if success and file then
+        sendChatMessages(splitText(file))
+    else
+        debugPrint("Failed to read file: " .. fileName, true)
+    end
+end
+
+
+-- Listen for chat messages from the local player
+getgenv().BibleScript = Players.LocalPlayer.Chatted:Connect(function(message)
+    debugPrint("Message received: " .. message)
+    
+    -- Check for specific phrases
+for phrase, fileName in pairs(phraseToFile) do
+    if message:lower():find(phrase:lower()) then
+        debugPrint("Sending content of " .. fileName)
+        sendTextFileContent(fileName)
+        return
+    end
+end
+
+    
+    -- Check for Bible references
+    local book, chapter, verses = message:match("(.-)%s(%d+):([%d,-]+)")
+    
+    if book and chapter and verses then
+        sendChatMessages(splitText(fetchBibleVerses(book:lower(), chapter, verses)))
+    else
+        debugPrint("Unrecognized message")
+    end
+end)
+
+debugPrint("Client-side script loaded successfully")
