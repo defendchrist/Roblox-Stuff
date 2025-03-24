@@ -1,292 +1,135 @@
---[[
-    Optimized Anti-Void Script
-    Enhanced performance, better error handling, and improved teleportation
-]]
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
--- Configuration
 local CONFIG = {
-    checkFrequency = 0.1,                -- How often to check position (seconds)
-    velocityPredictionFactor = 3,        -- Higher = more aggressive fall prediction
-    teleportHeight = 25,                 -- Height above destroy height to teleport to
-    notificationDuration = 5,            -- Duration of notifications
-    recordPositionInterval = 0.5,        -- How often to record safe positions
-    safePositionHistory = 5,             -- Number of safe positions to remember
-    safePositionMinHeight = 10,          -- Minimum height for a position to be considered "safe"
-    useDebugVisualization = false        -- Visual indicators for debugging
+    voidSafetyMargin = 50,           -- Height above void line
+    platformSize = Vector3.new(20, 1, 20),  -- Size of safety platform
+    platformColor = Color3.fromRGB(100, 100, 100),  -- Platform color
+    followUpdateFrequency = 0.05,    -- How often platform updates position
+    platformTransparency = 0.7,      -- Transparency of the platform
+    enableLogging = true
 }
 
--- Services
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
+local AntiVoidState = {
+    originalDestroyHeight = Workspace.FallenPartsDestroyHeight,
+    isProtectionActive = false,
+    safetyPlatform = nil,
+    protectionConnections = {}
+}
 
--- Variables
-local LocalPlayer = Players.LocalPlayer
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local OriginalDestroyHeight = workspace.FallenPartsDestroyHeight
-local SafePositions = {}
-local Connections = {}
-local IsTeleporting = false
-local LastNotificationTime = 0
+local function Log(message)
+    if CONFIG.enableLogging then
+        print("[Dynamic Platform] " .. message)
+    end
+end
 
--- Save original destroy height and set new one
-workspace.FallenPartsDestroyHeight = -50000
-
--- Utility functions
-local function SendNotification(title, message, duration, buttons, callback)
-    pcall(function()
-        if tick() - LastNotificationTime < 1 then return end
-        LastNotificationTime = tick()
+local function CreateOrUpdateSafetyPlatform(player)
+    local character = player.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    -- Create platform if it doesn't exist
+    if not AntiVoidState.safetyPlatform or not AntiVoidState.safetyPlatform.Parent then
+        local platform = Instance.new("Part")
+        platform.Size = CONFIG.platformSize
+        platform.Anchored = true
+        platform.CanCollide = true
+        platform.Color = CONFIG.platformColor
+        platform.Transparency = CONFIG.platformTransparency
+        platform.Material = Enum.Material.SmoothPlastic
         
-        if buttons and callback then
-            local BindableFunction = Instance.new("BindableFunction")
-            BindableFunction.OnInvoke = callback
+        platform.Parent = Workspace
+        AntiVoidState.safetyPlatform = platform
+    end
+    
+    -- Update platform position
+    local currentPos = rootPart.Position
+    local platform = AntiVoidState.safetyPlatform
+    
+    platform.Position = Vector3.new(
+        currentPos.X, 
+        AntiVoidState.originalDestroyHeight + CONFIG.voidSafetyMargin - platform.Size.Y/2, 
+        currentPos.Z
+    )
+end
+
+local function StartAntiVoidProtection(player)
+    if AntiVoidState.isProtectionActive then return end
+    AntiVoidState.isProtectionActive = true
+    
+    -- Platform following connection
+    local platformFollower = RunService.Heartbeat:Connect(function()
+        CreateOrUpdateSafetyPlatform(player)
+    end)
+    
+    table.insert(AntiVoidState.protectionConnections, platformFollower)
+    
+    -- Void detection connection
+    local voidDetection = RunService.Stepped:Connect(function()
+        local character = player.Character
+        if not character then return end
+        
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        if not rootPart then return end
+        
+        local currentPos = rootPart.Position
+        local voidThreshold = AntiVoidState.originalDestroyHeight + CONFIG.voidSafetyMargin
+        
+        if currentPos.Y <= voidThreshold then
+            -- Immediately teleport character up if it falls too low
+            local safeCFrame = CFrame.new(
+                rootPart.Position.X, 
+                voidThreshold + 5, 
+                rootPart.Position.Z
+            )
             
-            StarterGui:SetCore("SendNotification", {
-                Title = title,
-                Text = message,
-                Duration = duration or CONFIG.notificationDuration,
-                Callback = BindableFunction,
-                Button1 = buttons[1],
-                Button2 = buttons[2]
-            })
-        else
-            StarterGui:SetCore("SendNotification", {
-                Title = title,
-                Text = message,
-                Duration = duration or CONFIG.notificationDuration
-            })
-        end
-    end)
-end
-
-local function GetRootPart()
-    if not Character then return nil end
-    return Character:FindFirstChild("HumanoidRootPart") or Character.PrimaryPart or Character:FindFirstChildWhichIsA("BasePart")
-end
-
-local function GetCharacterPosition()
-    local RootPart = GetRootPart()
-    if RootPart then
-        return RootPart.Position, RootPart.CFrame
-    else
-        local PrimaryPart = Character:FindFirstChildWhichIsA("BasePart")
-        if PrimaryPart then
-            return PrimaryPart.Position, Character:GetPivot()
-        end
-    end
-    return nil, nil
-end
-
-local function GetHumanoid()
-    if not Character then return nil end
-    return Character:FindFirstChildWhichIsA("Humanoid")
-end
-
-local function RecordSafePosition()
-    local Humanoid = GetHumanoid()
-    if not Humanoid or Humanoid:GetState() == Enum.HumanoidStateType.Freefall or Humanoid:GetState() == Enum.HumanoidStateType.Dead then
-        return
-    end
-    
-    local _, CharCFrame = GetCharacterPosition()
-    if not CharCFrame then return end
-    
-    -- Only record positions above a certain height
-    if CharCFrame.Position.Y > CONFIG.safePositionMinHeight then
-        table.insert(SafePositions, 1, CharCFrame)
-        -- Limit the history size
-        if #SafePositions > CONFIG.safePositionHistory then
-            table.remove(SafePositions)
-        end
-    end
-end
-
-local function TeleportToSafePosition()
-    if IsTeleporting then return end
-    IsTeleporting = true
-    
-    local Humanoid = GetHumanoid()
-    local RootPart = GetRootPart()
-    
-    if not RootPart or not Character then
-        IsTeleporting = false
-        return
-    end
-    
-    -- Stop character physics
-    for _, Part in pairs(Character:GetDescendants()) do
-        if Part:IsA("BasePart") then
-            Part.Velocity = Vector3.new(0, 0, 0)
-            Part.RotVelocity = Vector3.new(0, 0, 0)
-        end
-    end
-    
-    -- Find the best safe position to teleport to
-    local SafePosition = SafePositions[1]
-    if not SafePosition then
-        -- If no safe position is recorded, go up from current position
-        local CurrentPosition = GetCharacterPosition()
-        if CurrentPosition then
-            local x, z = CurrentPosition.X, CurrentPosition.Z
-            SafePosition = CFrame.new(x, OriginalDestroyHeight + CONFIG.teleportHeight + 50, z)
-        end
-    end
-    
-    if SafePosition then
-        -- Teleport using character pivot for better stability
-        Character:PivotTo(SafePosition)
-        
-        -- Create a temporary platform for safety
-        if CONFIG.useDebugVisualization then
-            local TempPlatform = Instance.new("Part")
-            TempPlatform.Size = Vector3.new(10, 1, 10)
-            TempPlatform.Anchored = true
-            TempPlatform.CanCollide = true
-            TempPlatform.Transparency = 0.5
-            TempPlatform.CFrame = CFrame.new(SafePosition.Position) * CFrame.new(0, -3, 0)
-            TempPlatform.Parent = workspace
-            game:GetService("Debris"):AddItem(TempPlatform, 3)
-        end
-        
-        -- Ensure humanoid state is reset properly
-        if Humanoid then
-            Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end
-        
-        SendNotification("Anti-Void", "Teleported to safe position", 2)
-    end
-    
-    task.delay(0.5, function()
-        IsTeleporting = false
-    end)
-end
-
-local function CheckForVoid()
-    local Position, CharCFrame = GetCharacterPosition()
-    if not Position then return end
-    
-    local RootPart = GetRootPart()
-    if not RootPart then return end
-    
-    -- Get velocity-based prediction of future position
-    local PredictedY = Position.Y + (RootPart.Velocity.Y * CONFIG.velocityPredictionFactor * CONFIG.checkFrequency)
-    
-    -- Check if current or predicted position is in the void
-    if Position.Y < OriginalDestroyHeight + CONFIG.teleportHeight or 
-       PredictedY < OriginalDestroyHeight + CONFIG.teleportHeight then
-        TeleportToSafePosition()
-    end
-end
-
--- Character handling
-local function SetupCharacter(NewCharacter)
-    Character = NewCharacter
-    SafePositions = {} -- Reset safe positions on character respawn
-    
-    -- Wait for character to be fully loaded
-    task.wait(0.5)
-    
-    local Humanoid = GetHumanoid()
-    if not Humanoid then return end
-    
-    -- Record initial position as safe
-    RecordSafePosition()
-    
-    -- Listen for humanoid state changes
-    local StateConnection = Humanoid.StateChanged:Connect(function(_, NewState)
-        -- Record position when in good states (not falling/jumping)
-        if NewState == Enum.HumanoidStateType.Running or 
-           NewState == Enum.HumanoidStateType.Swimming or 
-           NewState == Enum.HumanoidStateType.Landed then
-            RecordSafePosition()
+            character:PivotTo(safeCFrame)
+            rootPart.Velocity = Vector3.new(0, 0, 0)
         end
     end)
     
-    table.insert(Connections, StateConnection)
+    table.insert(AntiVoidState.protectionConnections, voidDetection)
+    
+    Log("Dynamic Platform protection activated")
 end
 
--- Main setup
-local function Initialize()
-    -- Clean up any existing connections
-    for _, Connection in pairs(Connections) do
-        if typeof(Connection) == "RBXScriptConnection" and Connection.Connected then
-            Connection:Disconnect()
-        end
-    end
-    Connections = {}
-    
-    -- Setup periodic safe position recording
-    local PositionRecorder = RunService.Heartbeat:Connect(function()
-        if not Character then return end
-        
-        task.spawn(function()
-            RecordSafePosition()
-        end)
-    end)
-    table.insert(Connections, PositionRecorder)
-    
-    -- Setup void checking
-    local VoidChecker = RunService.Stepped:Connect(function()
-        if not Character then return end
-        
-        task.spawn(function()
-            CheckForVoid()
-        end)
-    end)
-    table.insert(Connections, VoidChecker)
-    
-    -- Handle character respawning
-    local CharacterAdded = LocalPlayer.CharacterAdded:Connect(SetupCharacter)
-    table.insert(Connections, CharacterAdded)
-    
-    -- Setup current character
-    if Character then
-        SetupCharacter(Character)
+local function StopAntiVoidProtection()
+    -- Disconnect all protection connections
+    for _, connection in ipairs(AntiVoidState.protectionConnections) do
+        connection:Disconnect()
     end
     
-    SendNotification("Anti-Void", "Protection activated", 3)
-end
-
--- Cleanup function
-local function Cleanup()
+    -- Remove safety platform
+    if AntiVoidState.safetyPlatform and AntiVoidState.safetyPlatform.Parent then
+        AntiVoidState.safetyPlatform:Destroy()
+    end
+    
     -- Restore original destroy height
-    workspace.FallenPartsDestroyHeight = OriginalDestroyHeight
+    Workspace.FallenPartsDestroyHeight = AntiVoidState.originalDestroyHeight
     
-    -- Disconnect all connections
-    for _, Connection in pairs(Connections) do
-        if typeof(Connection) == "RBXScriptConnection" and Connection.Connected then
-            Connection:Disconnect()
-        end
-    end
-    Connections = {}
+    AntiVoidState.protectionConnections = {}
+    AntiVoidState.isProtectionActive = false
     
-    SendNotification("Anti-Void", "Protection deactivated", 3)
+    Log("Dynamic Platform protection deactivated")
 end
 
--- Manual teleport option
-local function SetupManualTeleport()
-    local InputService = game:GetService("UserInputService")
-    local TeleportKey = Enum.KeyCode.T
-    
-    local KeyConnection = InputService.InputBegan:Connect(function(Input, GameProcessed)
-        if GameProcessed then return end
-        
-        if Input.KeyCode == TeleportKey then
-            TeleportToSafePosition()
-        end
-    end)
-    
-    table.insert(Connections, KeyConnection)
-    SendNotification("Anti-Void", "Press T to teleport to safe position", 5)
+-- Initialize for local player
+local LocalPlayer = Players.LocalPlayer
+if LocalPlayer then
+    StartAntiVoidProtection(LocalPlayer)
 end
 
--- Initialize the script
-Initialize()
-SetupManualTeleport()
+-- Expose functions globally for manual control
+getgenv().StartAntiVoidProtection = StartAntiVoidProtection
+getgenv().StopAntiVoidProtection = StopAntiVoidProtection
 
--- Make cleanup function available globally
-getgenv().AntiVoidCleanup = Cleanup
+-- Auto-restart protection on character respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)  -- Small delay to ensure character is fully loaded
+    StartAntiVoidProtection(LocalPlayer)
+end)
 
--- Return success message
-return "Anti-Void protection activated successfully!"
+return "Dynamic Platform Protection Initialized"
