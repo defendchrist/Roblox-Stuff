@@ -1,0 +1,47 @@
+-- Simple Killbrick Teleport Cycle Script for Executor
+local player = game.Players.LocalPlayer
+local killbrickPosition = Vector3.new(4226, 4, 60) -- Replace with your killbrick position
+
+-- Store original position before teleporting
+local character = player.Character or player.CharacterAdded:Wait()
+local originalPosition = character:WaitForChild("HumanoidRootPart").Position
+
+-- Function to teleport to killbrick
+local function teleportToKillbrick()
+    character = player.Character or player.CharacterAdded:Wait()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        character.HumanoidRootPart.CFrame = CFrame.new(killbrickPosition)
+    end
+end
+
+-- First teleport to killbrick
+teleportToKillbrick()
+
+-- Wait for death and handle respawn
+local function onDied()
+    -- Wait for respawn
+    character = player.CharacterAdded:Wait()
+    local humanoid = character:WaitForChild("Humanoid")
+    local rootPart = character:WaitForChild("HumanoidRootPart")
+    
+    -- Store respawn position
+    local respawnPosition = rootPart.Position
+    
+    -- Wait a moment then teleport back to killbrick
+    task.wait(0.5)
+    rootPart.CFrame = CFrame.new(killbrickPosition)
+    
+    -- Set up connection for second death
+    humanoid.Died:Connect(function()
+        -- Wait for second respawn
+        character = player.CharacterAdded:Wait()
+        rootPart = character:WaitForChild("HumanoidRootPart")
+        
+        -- Teleport back to respawn position
+        task.wait(0.5)
+        rootPart.CFrame = CFrame.new(respawnPosition)
+    end)
+end
+
+-- Connect to the current character's death event
+character:WaitForChild("Humanoid").Died:Connect(onDied)
