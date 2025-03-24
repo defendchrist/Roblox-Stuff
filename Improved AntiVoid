@@ -1,0 +1,119 @@
+-- Anti Void and Killbrick Script
+-- This script attempts to prevent death from void falls and killbricks
+
+local Player = game.Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+local HRP = Character:WaitForChild("HumanoidRootPart")
+local SafePosition = HRP.Position -- Store initial position as safe
+
+-- Store the last safe position continuously
+local function updateSafePosition()
+    if Humanoid.Health > 0 and HRP.Position.Y > -100 then
+        -- Only update if we're not too low and alive
+        SafePosition = HRP.Position
+    end
+end
+
+-- Anti-void teleport function
+local function checkVoid()
+    if HRP.Position.Y < -500 then -- Common void threshold
+        HRP.CFrame = CFrame.new(SafePosition)
+    end
+end
+
+-- Anti-killbrick function using touched event detection
+local function setupKillbrickProtection()
+    local function onTouched(part)
+        -- Check if the part might be a killbrick by common naming conventions
+        local name = part.Name:lower()
+        if name:find("kill") or name:find("void") or name:find("lava") or name:find("death") then
+            -- Prevent the touch by teleporting back to safe position
+            HRP.CFrame = CFrame.new(SafePosition)
+            return
+        end
+        
+        -- Check for specific properties that might indicate a killbrick
+        if part.Transparency == 1 and part.CanCollide == false then
+            local killBrickCandidate = true
+            
+            -- Some killbricks might be visible but still dangerous
+            if part.BrickColor == BrickColor.new("Really red") then
+                killBrickCandidate = true
+            end
+            
+            if killBrickCandidate then
+                -- Prevent death by teleporting
+                HRP.CFrame = CFrame.new(SafePosition)
+            end
+        end
+    end
+    
+    -- Connect the touch event to the HumanoidRootPart
+    HRP.Touched:Connect(onTouched)
+end
+
+-- Health monitor to detect instant deaths
+local function healthMonitor()
+    local lastHealth = Humanoid.Health
+    
+    Humanoid.HealthChanged:Connect(function(health)
+        -- If health drops significantly in one frame, likely a killbrick
+        if health < lastHealth - 25 then
+            -- Attempt to undo the damage
+            Humanoid.Health = lastHealth
+            -- Teleport to safety
+            HRP.CFrame = CFrame.new(SafePosition)
+        end
+        lastHealth = health
+    end)
+end
+
+-- Handle character respawning
+Player.CharacterAdded:Connect(function(newCharacter)
+    Character = newCharacter
+    Humanoid = Character:WaitForChild("Humanoid")
+    HRP = Character:WaitForChild("HumanoidRootPart")
+    
+    -- Reset safe position to spawn location
+    SafePosition = HRP.Position
+    
+    -- Set up all protections for new character
+    setupKillbrickProtection()
+    healthMonitor()
+end)
+
+-- Create a continuous loop to update safe position and check for void falls
+spawn(function()
+    while wait(0.5) do -- Check every half second
+        if Character and Character:FindFirstChild("HumanoidRootPart") and Humanoid.Health > 0 then
+            updateSafePosition()
+            checkVoid()
+        end
+    end
+end)
+
+-- Initialize protections
+setupKillbrickProtection()
+healthMonitor()
+
+-- Anti-damage script to handle custom damage events
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    -- Prevent common damage handling methods
+    if method == "TakeDamage" or method == "BreakJoints" then
+        return nil
+    end
+    
+    return oldNamecall(self, ...)
+end)
+
+setreadonly(mt, true)
+
+print("Anti Void and Killbrick Script loaded successfully!")
