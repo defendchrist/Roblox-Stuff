@@ -1,47 +1,81 @@
--- Simple Killbrick Teleport Cycle Script for Executor
+-- Reliable Killbrick Teleport Cycle Script for Executor
 local player = game.Players.LocalPlayer
 local killbrickPosition = Vector3.new(4226, 4, 60) -- Replace with your killbrick position
 
--- Store original position before teleporting
-local character = player.Character or player.CharacterAdded:Wait()
-local originalPosition = character:WaitForChild("HumanoidRootPart").Position
-
--- Function to teleport to killbrick
-local function teleportToKillbrick()
-    character = player.Character or player.CharacterAdded:Wait()
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        character.HumanoidRootPart.CFrame = CFrame.new(killbrickPosition)
+-- Wait until character is fully loaded
+local function waitForChar()
+    local char = player.Character or player.CharacterAdded:Wait()
+    if not char:FindFirstChild("HumanoidRootPart") then
+        char:WaitForChild("HumanoidRootPart")
     end
+    if not char:FindFirstChild("Humanoid") then
+        char:WaitForChild("Humanoid")
+    end
+    -- Additional wait to ensure character is fully loaded
+    task.wait(1)
+    return char
+end
+
+-- Get initial character and position
+local character = waitForChar()
+local originalPosition = character.HumanoidRootPart.Position
+
+-- Function to teleport to killbrick with proper timing
+local function teleportToKillbrick()
+    character = waitForChar()
+    character.HumanoidRootPart.CFrame = CFrame.new(killbrickPosition)
+    print("Teleported to killbrick")
 end
 
 -- First teleport to killbrick
 teleportToKillbrick()
 
--- Wait for death and handle respawn
+-- Wait for death and handle respawn with improved timing
 local function onDied()
-    -- Wait for respawn
+    print("Died from killbrick")
+    
+    -- Wait for respawn with generous timing
+    task.wait(2) -- Give more time for respawn process
     character = player.CharacterAdded:Wait()
+    
+    -- Wait for the character parts to load fully
     local humanoid = character:WaitForChild("Humanoid")
     local rootPart = character:WaitForChild("HumanoidRootPart")
     
+    -- Additional wait to ensure character is fully loaded
+    task.wait(2)
+    
     -- Store respawn position
     local respawnPosition = rootPart.Position
+    print("Respawned at: " .. tostring(respawnPosition))
     
-    -- Wait a moment then teleport back to killbrick
-    task.wait(0.5)
+    -- Wait before teleporting back to killbrick
+    task.wait(1.5)
     rootPart.CFrame = CFrame.new(killbrickPosition)
+    print("Teleported back to killbrick")
     
-    -- Set up connection for second death
+    -- Set up connection for second death with better timing
     humanoid.Died:Connect(function()
-        -- Wait for second respawn
+        print("Died from killbrick again")
+        
+        -- Wait for second respawn with improved timing
+        task.wait(2)
         character = player.CharacterAdded:Wait()
+        
+        -- Wait for character to fully load
         rootPart = character:WaitForChild("HumanoidRootPart")
+        humanoid = character:WaitForChild("Humanoid")
+        
+        -- Additional wait to ensure character is stable
+        task.wait(2)
         
         -- Teleport back to respawn position
-        task.wait(0.5)
         rootPart.CFrame = CFrame.new(respawnPosition)
+        print("Returned to respawn position: " .. tostring(respawnPosition))
     end)
 end
 
 -- Connect to the current character's death event
 character:WaitForChild("Humanoid").Died:Connect(onDied)
+
+print("Script loaded successfully - waiting for death cycle")
