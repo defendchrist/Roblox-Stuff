@@ -1,119 +1,292 @@
--- Anti Void and Killbrick Script
--- This script attempts to prevent death from void falls and killbricks
+--[[
+    Optimized Anti-Void Script
+    Enhanced performance, better error handling, and improved teleportation
+]]
 
-local Player = game.Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-local HRP = Character:WaitForChild("HumanoidRootPart")
-local SafePosition = HRP.Position -- Store initial position as safe
+-- Configuration
+local CONFIG = {
+    checkFrequency = 0.1,                -- How often to check position (seconds)
+    velocityPredictionFactor = 3,        -- Higher = more aggressive fall prediction
+    teleportHeight = 25,                 -- Height above destroy height to teleport to
+    notificationDuration = 5,            -- Duration of notifications
+    recordPositionInterval = 0.5,        -- How often to record safe positions
+    safePositionHistory = 5,             -- Number of safe positions to remember
+    safePositionMinHeight = 10,          -- Minimum height for a position to be considered "safe"
+    useDebugVisualization = false        -- Visual indicators for debugging
+}
 
--- Store the last safe position continuously
-local function updateSafePosition()
-    if Humanoid.Health > 0 and HRP.Position.Y > -100 then
-        -- Only update if we're not too low and alive
-        SafePosition = HRP.Position
-    end
-end
+-- Services
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
 
--- Anti-void teleport function
-local function checkVoid()
-    if HRP.Position.Y < -500 then -- Common void threshold
-        HRP.CFrame = CFrame.new(SafePosition)
-    end
-end
+-- Variables
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local OriginalDestroyHeight = workspace.FallenPartsDestroyHeight
+local SafePositions = {}
+local Connections = {}
+local IsTeleporting = false
+local LastNotificationTime = 0
 
--- Anti-killbrick function using touched event detection
-local function setupKillbrickProtection()
-    local function onTouched(part)
-        -- Check if the part might be a killbrick by common naming conventions
-        local name = part.Name:lower()
-        if name:find("kill") or name:find("void") or name:find("lava") or name:find("death") then
-            -- Prevent the touch by teleporting back to safe position
-            HRP.CFrame = CFrame.new(SafePosition)
-            return
-        end
+-- Save original destroy height and set new one
+workspace.FallenPartsDestroyHeight = -50000
+
+-- Utility functions
+local function SendNotification(title, message, duration, buttons, callback)
+    pcall(function()
+        if tick() - LastNotificationTime < 1 then return end
+        LastNotificationTime = tick()
         
-        -- Check for specific properties that might indicate a killbrick
-        if part.Transparency == 1 and part.CanCollide == false then
-            local killBrickCandidate = true
+        if buttons and callback then
+            local BindableFunction = Instance.new("BindableFunction")
+            BindableFunction.OnInvoke = callback
             
-            -- Some killbricks might be visible but still dangerous
-            if part.BrickColor == BrickColor.new("Really red") then
-                killBrickCandidate = true
-            end
-            
-            if killBrickCandidate then
-                -- Prevent death by teleporting
-                HRP.CFrame = CFrame.new(SafePosition)
-            end
+            StarterGui:SetCore("SendNotification", {
+                Title = title,
+                Text = message,
+                Duration = duration or CONFIG.notificationDuration,
+                Callback = BindableFunction,
+                Button1 = buttons[1],
+                Button2 = buttons[2]
+            })
+        else
+            StarterGui:SetCore("SendNotification", {
+                Title = title,
+                Text = message,
+                Duration = duration or CONFIG.notificationDuration
+            })
         end
-    end
-    
-    -- Connect the touch event to the HumanoidRootPart
-    HRP.Touched:Connect(onTouched)
-end
-
--- Health monitor to detect instant deaths
-local function healthMonitor()
-    local lastHealth = Humanoid.Health
-    
-    Humanoid.HealthChanged:Connect(function(health)
-        -- If health drops significantly in one frame, likely a killbrick
-        if health < lastHealth - 25 then
-            -- Attempt to undo the damage
-            Humanoid.Health = lastHealth
-            -- Teleport to safety
-            HRP.CFrame = CFrame.new(SafePosition)
-        end
-        lastHealth = health
     end)
 end
 
--- Handle character respawning
-Player.CharacterAdded:Connect(function(newCharacter)
-    Character = newCharacter
-    Humanoid = Character:WaitForChild("Humanoid")
-    HRP = Character:WaitForChild("HumanoidRootPart")
-    
-    -- Reset safe position to spawn location
-    SafePosition = HRP.Position
-    
-    -- Set up all protections for new character
-    setupKillbrickProtection()
-    healthMonitor()
-end)
+local function GetRootPart()
+    if not Character then return nil end
+    return Character:FindFirstChild("HumanoidRootPart") or Character.PrimaryPart or Character:FindFirstChildWhichIsA("BasePart")
+end
 
--- Create a continuous loop to update safe position and check for void falls
-spawn(function()
-    while wait(0.5) do -- Check every half second
-        if Character and Character:FindFirstChild("HumanoidRootPart") and Humanoid.Health > 0 then
-            updateSafePosition()
-            checkVoid()
+local function GetCharacterPosition()
+    local RootPart = GetRootPart()
+    if RootPart then
+        return RootPart.Position, RootPart.CFrame
+    else
+        local PrimaryPart = Character:FindFirstChildWhichIsA("BasePart")
+        if PrimaryPart then
+            return PrimaryPart.Position, Character:GetPivot()
         end
     end
-end)
+    return nil, nil
+end
 
--- Initialize protections
-setupKillbrickProtection()
-healthMonitor()
+local function GetHumanoid()
+    if not Character then return nil end
+    return Character:FindFirstChildWhichIsA("Humanoid")
+end
 
--- Anti-damage script to handle custom damage events
-local mt = getrawmetatable(game)
-local oldNamecall = mt.__namecall
-setreadonly(mt, false)
-
-mt.__namecall = newcclosure(function(self, ...)
-    local method = getnamecallmethod()
-    local args = {...}
-    
-    -- Prevent common damage handling methods
-    if method == "TakeDamage" or method == "BreakJoints" then
-        return nil
+local function RecordSafePosition()
+    local Humanoid = GetHumanoid()
+    if not Humanoid or Humanoid:GetState() == Enum.HumanoidStateType.Freefall or Humanoid:GetState() == Enum.HumanoidStateType.Dead then
+        return
     end
     
-    return oldNamecall(self, ...)
-end)
+    local _, CharCFrame = GetCharacterPosition()
+    if not CharCFrame then return end
+    
+    -- Only record positions above a certain height
+    if CharCFrame.Position.Y > CONFIG.safePositionMinHeight then
+        table.insert(SafePositions, 1, CharCFrame)
+        -- Limit the history size
+        if #SafePositions > CONFIG.safePositionHistory then
+            table.remove(SafePositions)
+        end
+    end
+end
 
-setreadonly(mt, true)
+local function TeleportToSafePosition()
+    if IsTeleporting then return end
+    IsTeleporting = true
+    
+    local Humanoid = GetHumanoid()
+    local RootPart = GetRootPart()
+    
+    if not RootPart or not Character then
+        IsTeleporting = false
+        return
+    end
+    
+    -- Stop character physics
+    for _, Part in pairs(Character:GetDescendants()) do
+        if Part:IsA("BasePart") then
+            Part.Velocity = Vector3.new(0, 0, 0)
+            Part.RotVelocity = Vector3.new(0, 0, 0)
+        end
+    end
+    
+    -- Find the best safe position to teleport to
+    local SafePosition = SafePositions[1]
+    if not SafePosition then
+        -- If no safe position is recorded, go up from current position
+        local CurrentPosition = GetCharacterPosition()
+        if CurrentPosition then
+            local x, z = CurrentPosition.X, CurrentPosition.Z
+            SafePosition = CFrame.new(x, OriginalDestroyHeight + CONFIG.teleportHeight + 50, z)
+        end
+    end
+    
+    if SafePosition then
+        -- Teleport using character pivot for better stability
+        Character:PivotTo(SafePosition)
+        
+        -- Create a temporary platform for safety
+        if CONFIG.useDebugVisualization then
+            local TempPlatform = Instance.new("Part")
+            TempPlatform.Size = Vector3.new(10, 1, 10)
+            TempPlatform.Anchored = true
+            TempPlatform.CanCollide = true
+            TempPlatform.Transparency = 0.5
+            TempPlatform.CFrame = CFrame.new(SafePosition.Position) * CFrame.new(0, -3, 0)
+            TempPlatform.Parent = workspace
+            game:GetService("Debris"):AddItem(TempPlatform, 3)
+        end
+        
+        -- Ensure humanoid state is reset properly
+        if Humanoid then
+            Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+        
+        SendNotification("Anti-Void", "Teleported to safe position", 2)
+    end
+    
+    task.delay(0.5, function()
+        IsTeleporting = false
+    end)
+end
 
-print("Anti Void and Killbrick Script loaded successfully!")
+local function CheckForVoid()
+    local Position, CharCFrame = GetCharacterPosition()
+    if not Position then return end
+    
+    local RootPart = GetRootPart()
+    if not RootPart then return end
+    
+    -- Get velocity-based prediction of future position
+    local PredictedY = Position.Y + (RootPart.Velocity.Y * CONFIG.velocityPredictionFactor * CONFIG.checkFrequency)
+    
+    -- Check if current or predicted position is in the void
+    if Position.Y < OriginalDestroyHeight + CONFIG.teleportHeight or 
+       PredictedY < OriginalDestroyHeight + CONFIG.teleportHeight then
+        TeleportToSafePosition()
+    end
+end
+
+-- Character handling
+local function SetupCharacter(NewCharacter)
+    Character = NewCharacter
+    SafePositions = {} -- Reset safe positions on character respawn
+    
+    -- Wait for character to be fully loaded
+    task.wait(0.5)
+    
+    local Humanoid = GetHumanoid()
+    if not Humanoid then return end
+    
+    -- Record initial position as safe
+    RecordSafePosition()
+    
+    -- Listen for humanoid state changes
+    local StateConnection = Humanoid.StateChanged:Connect(function(_, NewState)
+        -- Record position when in good states (not falling/jumping)
+        if NewState == Enum.HumanoidStateType.Running or 
+           NewState == Enum.HumanoidStateType.Swimming or 
+           NewState == Enum.HumanoidStateType.Landed then
+            RecordSafePosition()
+        end
+    end)
+    
+    table.insert(Connections, StateConnection)
+end
+
+-- Main setup
+local function Initialize()
+    -- Clean up any existing connections
+    for _, Connection in pairs(Connections) do
+        if typeof(Connection) == "RBXScriptConnection" and Connection.Connected then
+            Connection:Disconnect()
+        end
+    end
+    Connections = {}
+    
+    -- Setup periodic safe position recording
+    local PositionRecorder = RunService.Heartbeat:Connect(function()
+        if not Character then return end
+        
+        task.spawn(function()
+            RecordSafePosition()
+        end)
+    end)
+    table.insert(Connections, PositionRecorder)
+    
+    -- Setup void checking
+    local VoidChecker = RunService.Stepped:Connect(function()
+        if not Character then return end
+        
+        task.spawn(function()
+            CheckForVoid()
+        end)
+    end)
+    table.insert(Connections, VoidChecker)
+    
+    -- Handle character respawning
+    local CharacterAdded = LocalPlayer.CharacterAdded:Connect(SetupCharacter)
+    table.insert(Connections, CharacterAdded)
+    
+    -- Setup current character
+    if Character then
+        SetupCharacter(Character)
+    end
+    
+    SendNotification("Anti-Void", "Protection activated", 3)
+end
+
+-- Cleanup function
+local function Cleanup()
+    -- Restore original destroy height
+    workspace.FallenPartsDestroyHeight = OriginalDestroyHeight
+    
+    -- Disconnect all connections
+    for _, Connection in pairs(Connections) do
+        if typeof(Connection) == "RBXScriptConnection" and Connection.Connected then
+            Connection:Disconnect()
+        end
+    end
+    Connections = {}
+    
+    SendNotification("Anti-Void", "Protection deactivated", 3)
+end
+
+-- Manual teleport option
+local function SetupManualTeleport()
+    local InputService = game:GetService("UserInputService")
+    local TeleportKey = Enum.KeyCode.T
+    
+    local KeyConnection = InputService.InputBegan:Connect(function(Input, GameProcessed)
+        if GameProcessed then return end
+        
+        if Input.KeyCode == TeleportKey then
+            TeleportToSafePosition()
+        end
+    end)
+    
+    table.insert(Connections, KeyConnection)
+    SendNotification("Anti-Void", "Press T to teleport to safe position", 5)
+end
+
+-- Initialize the script
+Initialize()
+SetupManualTeleport()
+
+-- Make cleanup function available globally
+getgenv().AntiVoidCleanup = Cleanup
+
+-- Return success message
+return "Anti-Void protection activated successfully!"
