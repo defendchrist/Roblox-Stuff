@@ -1,0 +1,185 @@
+-- Chaotic Player Orbiter Script with Singleton Execution
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Cleanup any existing script instances
+if _G.OrbitScriptRunning then
+    -- Disconnect existing connections
+    if _G.OrbitScriptConnections then
+        for _, connection in ipairs(_G.OrbitScriptConnections) do
+            connection:Disconnect()
+        end
+    end
+end
+
+local config = {
+    activationKey = Enum.KeyCode.E,
+    maxDistance = 50,
+    orbitRadius = 15,
+    orbitSpeed = 100,
+    chaosFactor = 7
+}
+
+local localPlayer = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local isOrbiting = false
+local targetPlayer = nil
+local elapsedTime = 0
+
+-- Store connections to allow cleanup
+_G.OrbitScriptConnections = {}
+
+-- Find nearest player
+local function findNearestPlayer()
+    local character = localPlayer.Character
+    if not character then return nil end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+    
+    local nearestPlayer = nil
+    local nearestDistance = config.maxDistance
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= localPlayer and 
+           player.Character and 
+           player.Character:FindFirstChild("HumanoidRootPart") then
+            
+            local targetRoot = player.Character.HumanoidRootPart
+            local distance = (targetRoot.Position - rootPart.Position).Magnitude
+            
+            if distance < nearestDistance then
+                nearestPlayer = player
+                nearestDistance = distance
+            end
+        end
+    end
+    
+    return nearestPlayer
+end
+
+-- Advanced chaos movement generation
+local function generateChaosOffset(time)
+    local x = math.sin(time * 1.1) * math.cos(time * 0.7) * config.chaosFactor
+    local y = math.cos(time * 1.3) * math.sin(time * 0.9) * config.chaosFactor
+    local z = math.sin(time * 1.5) * math.cos(time * 0.5) * config.chaosFactor
+    
+    return Vector3.new(x, y, z)
+end
+
+-- Camera focus function
+local function focusCameraOnTarget(target)
+    if not target or not target.Character then return end
+    
+    camera.CameraSubject = target.Character
+end
+
+-- Completely stop character's momentum
+local function stopMomentum()
+    local character = localPlayer.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChild("Humanoid")
+    
+    if rootPart and humanoid then
+        -- Instantly zero out velocity
+        rootPart.Velocity = Vector3.new(0, 0, 0)
+        rootPart.RotVelocity = Vector3.new(0, 0, 0)
+        
+        -- Additional stability measures
+        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+        wait(0.1)
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+end
+
+-- Orbit update function
+local function updateOrbit(deltaTime)
+    if not targetPlayer or not targetPlayer.Character then 
+        targetPlayer = findNearestPlayer()
+        if not targetPlayer then return end
+        focusCameraOnTarget(targetPlayer)
+    end
+    
+    elapsedTime = elapsedTime + deltaTime * config.orbitSpeed
+    
+    local targetRoot = targetPlayer.Character.HumanoidRootPart
+    local localRoot = localPlayer.Character.HumanoidRootPart
+    
+    -- Consistent, controlled orbit calculation
+    local chaosOffset = generateChaosOffset(elapsedTime)
+    local orbitOffset = chaosOffset * (config.orbitRadius / 10)
+    
+    -- Calculate orbit position relative to target
+    local targetPosition = targetRoot.Position
+    local orbitPosition = targetPosition + 
+        Vector3.new(
+            math.sin(elapsedTime) * config.orbitRadius + orbitOffset.X, 
+            math.cos(elapsedTime) * config.orbitRadius + orbitOffset.Y, 
+            math.sin(elapsedTime * 0.5) * config.orbitRadius + orbitOffset.Z
+        )
+    
+    -- Smooth movement towards orbit position
+    local currentPosition = localRoot.Position
+    local newPosition = currentPosition:Lerp(orbitPosition, 0.5)
+    
+    -- Maintain visual orientation towards target
+    localRoot.CFrame = CFrame.new(newPosition, targetPosition)
+end
+
+-- Toggle orbiting
+local function toggleOrbiting()
+    if isOrbiting then
+        isOrbiting = false
+        camera.CameraSubject = localPlayer.Character
+        
+        -- Completely stop momentum when deactivating orbit
+        stopMomentum()
+        
+        print("Orbit deactivated")
+    else
+        targetPlayer = findNearestPlayer()
+        if targetPlayer then
+            isOrbiting = true
+            elapsedTime = 0
+            focusCameraOnTarget(targetPlayer)
+            print("Orbiting around: " .. targetPlayer.Name)
+        else
+            print("No nearby players found")
+        end
+    end
+end
+
+-- Connection for input handling
+local inputConnection = UserInputService.InputBegan:Connect(function(input)
+    -- Check if chat is not currently focused before activating
+    if input.KeyCode == config.activationKey and not UserInputService:GetFocusedTextBox() then
+        toggleOrbiting()
+    end
+end)
+table.insert(_G.OrbitScriptConnections, inputConnection)
+
+-- Connection for main update loop
+local heartbeatConnection = RunService.Heartbeat:Connect(function(deltaTime)
+    if isOrbiting then
+        updateOrbit(deltaTime)
+    end
+end)
+table.insert(_G.OrbitScriptConnections, heartbeatConnection)
+
+-- Connection for character respawn
+local characterAddedConnection = localPlayer.CharacterAdded:Connect(function()
+    if isOrbiting then
+        isOrbiting = false
+        camera.CameraSubject = localPlayer.Character
+        stopMomentum()
+    end
+end)
+table.insert(_G.OrbitScriptConnections, characterAddedConnection)
+
+-- Set global flag to prevent multiple instances
+_G.OrbitScriptRunning = true
+
+print("Chaotic Player Orbiter loaded! Press " .. string.sub(tostring(config.activationKey), 14) .. " to activate")
