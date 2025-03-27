@@ -88,10 +88,44 @@ local function stopMomentum()
         rootPart.Velocity = Vector3.new(0, 0, 0)
         rootPart.RotVelocity = Vector3.new(0, 0, 0)
         
+        -- Force unseat if in a seat
+        if humanoid.Sit then
+            humanoid.Sit = false
+        end
+        
         -- Additional stability measures
         humanoid:ChangeState(Enum.HumanoidStateType.Physics)
         wait(0.1)
         humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+end
+
+-- Prevent seating
+local function preventSeating()
+    local character = localPlayer.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    if humanoid then
+        -- Force unseat if in a seat
+        if humanoid.Sit then
+            humanoid.Sit = false
+        end
+        
+        -- Disable sitting
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+    end
+end
+
+-- Re-enable seating
+local function enableSeating()
+    local character = localPlayer.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    if humanoid then
+        -- Re-enable sitting
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
     end
 end
 
@@ -102,6 +136,9 @@ local function updateOrbit(deltaTime)
         if not targetPlayer then return end
         focusCameraOnTarget(targetPlayer)
     end
+    
+    -- Prevent seating during orbit
+    preventSeating()
     
     elapsedTime = elapsedTime + deltaTime * config.orbitSpeed
     
@@ -137,6 +174,9 @@ local function toggleOrbiting()
         
         -- Completely stop momentum when deactivating orbit
         stopMomentum()
+        
+        -- Re-enable seating
+        enableSeating()
         
         print("Orbit deactivated")
     else
@@ -175,6 +215,7 @@ local characterAddedConnection = localPlayer.CharacterAdded:Connect(function()
         isOrbiting = false
         camera.CameraSubject = localPlayer.Character
         stopMomentum()
+        enableSeating()
     end
 end)
 table.insert(_G.OrbitScriptConnections, characterAddedConnection)
