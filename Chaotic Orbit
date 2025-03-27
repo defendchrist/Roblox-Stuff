@@ -15,10 +15,10 @@ end
 
 local config = {
     activationKey = Enum.KeyCode.E,
-    maxDistance = 50,
-    orbitRadius = 15,
-    orbitSpeed = 100,
-    chaosFactor = 7
+    maxDistance = 20,
+    orbitRadius = 5,
+    orbitSpeed = 100000,
+    chaosFactor = 60
 }
 
 local localPlayer = Players.LocalPlayer
