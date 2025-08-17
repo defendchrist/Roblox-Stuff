@@ -1,130 +1,250 @@
--- Toggle debug mode (set to true to enable debug/error messages, false to disable)
-local debugMode = true
-
--- Prevent duplicate execution by removing old script instance
-if getgenv().BibleScript then
-    getgenv().BibleScript:Disconnect()
-    getgenv().BibleScript = nil
+-- Flashback Rewind Script (Improved Version)
+-- First, check if script is already running and clean it up properly
+if getgenv().FlashbackControl then
+    pcall(function()
+        getgenv().FlashbackControl.Stop()
+    end)
 end
 
--- Constants
-local CHAT_LIMIT = 200
-local MESSAGE_INTERVAL = 1
-local BIBLE_VERSION = "en-dra" -- Change this to switch versions
-local HTTP_URL = "https://cdn.jsdelivr.net/gh/wldeh/bible-api/bibles/" .. BIBLE_VERSION .. "/books/"
-
--- Dictionary of phrases and their corresponding text files
--- Add or modify entries here for easy configuration
-local phraseToFile = {
-    ["The Nicene Creed"] = "TheNiceneCreed.txt",
-	["The Lords Prayer"] = "TheLordsPrayer.txt",
-	["A Prayer for All Times"] = "aPrayerForAllTimes.txt",
-    -- Add more entries as needed, for example:
-    -- ["the lord's prayer"] = "lords_prayer.txt",
-    -- ["the apostles' creed"] = "apostles_creed.txt"
+-- All configurable settings in one place
+local settings = {
+    -- Basic settings
+    Keybind = "C",           -- Key to hold for rewinding
+    Speed = 1,               -- Rewind speed (0.7 to 5)
+    FlashbackLength = 95,    -- Maximum rewind time in seconds
+    
+    -- Advanced settings
+    AutoStart = true,        -- Whether to start the script automatically
+    RenderStepPriority = 1,  -- Priority for the RenderStep binding (lower = higher priority)
+    RewindDelay = 0.3,       -- Delay in seconds between rewind movements
+    
+    -- Notification settings
+    NotificationDuration = {
+        Normal = 5,          -- Duration for normal notifications
+        Warning = 6,         -- Duration for warning notifications
+        Error = 7            -- Duration for error notifications
+    },
+    
+    -- Debug settings
+    PrintInstructions = true -- Whether to print usage instructions on startup
 }
 
--- Function to handle debug and error messages
-local function debugPrint(message, isError)
-    if debugMode then
-        (isError and warn or print)("[" .. (isError and "ERROR" or "DEBUG") .. "] " .. message)
+-- Initialize variables
+local frames = {}
+local flashback = {}
+local flashbacks_script = false
+local connections = {} -- Table to store connections for proper cleanup
+
+-- Get necessary services
+local uis = cloneref and cloneref(game:GetService("UserInputService")) or game:GetService("UserInputService")
+local runService = cloneref and cloneref(game:GetService("RunService")) or game:GetService("RunService")
+local players = game:GetService("Players")
+local player = players.LocalPlayer
+
+-- Create a simple notification function if not already defined
+if not getgenv().notify then
+    getgenv().notify = function(title, message, duration)
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = title;
+            Text = message;
+            Duration = duration;
+        })
     end
 end
 
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local TextChatService = game:GetService("TextChatService")
-
--- Detect supported HTTP request function
-local httpRequest = syn and syn.request or http_request or request
-if not httpRequest then error("HTTP request function not supported by this executor.") end
-
--- Function to fetch multiple Bible verses
-local function fetchBibleVerses(book, chapter, verses)
-    local collectedVerses = ""
-    for verse in verses:gmatch("%d+") do
-        local url = HTTP_URL .. book .. "/chapters/" .. chapter .. "/verses/" .. verse .. ".json"
-        debugPrint("Fetching Bible verse from URL: " .. url)
-        
-        local success, response = pcall(function()
-            return httpRequest({ Url = url, Method = "GET" })
-        end)
-        
-        if success and response and response.StatusCode == 200 then
-            local decoded = HttpService:JSONDecode(response.Body)
-            collectedVerses = collectedVerses .. (decoded and decoded.text or "Verse not found.") .. " "
-        else
-            debugPrint("Failed to fetch verse " .. verse, true)
-            collectedVerses = collectedVerses .. "Error fetching verse " .. verse .. ". "
-        end
-    end
-    return collectedVerses
-end
-
--- Function to split text into smaller chunks for Roblox chat
-local function splitText(text)
-    local chunks, len = {}, #text
-    for i = 1, len, CHAT_LIMIT do
-        table.insert(chunks, text:sub(i, i + CHAT_LIMIT - 1))
-    end
-    return chunks
-end
-
--- Function to send messages in Roblox chat with intervals
-local function sendChatMessages(messages)
-    local textChannel = TextChatService:FindFirstChild("TextChannels") and TextChatService.TextChannels:FindFirstChild("RBXGeneral")
-    for i, message in ipairs(messages) do
-        task.delay(MESSAGE_INTERVAL * (i - 1), function()
-            debugPrint("Sending message chunk: " .. message)
-            pcall(function()
-                if textChannel then
-                    textChannel:SendAsync(message)
-                else
-                    Players.LocalPlayer:Chat(message)
-                end
-            end)
-        end)
-    end
-end
-
--- Function to check if a message is a valid Bible reference
-local function isValidBibleReference(message)
-    return message:lower():match("^%d?%s?%w+%s%d+:%d+[-,%d]*$") ~= nil
-end
-
--- Function to send text file content as chat message
-local function sendTextFileContent(fileName)
-    local success, file = pcall(readfile, fileName)
-    if success and file then
-        sendChatMessages(splitText(file))
-    else
-        debugPrint("Failed to read file: " .. fileName, true)
-    end
-end
-
-
--- Listen for chat messages from the local player
-getgenv().BibleScript = Players.LocalPlayer.Chatted:Connect(function(message)
-    debugPrint("Message received: " .. message)
+-- Function to get current character references
+local function getCharacterReferences()
+    local character = player.Character
+    if not character then return nil, nil, nil end
     
-    -- Check for specific phrases
-for phrase, fileName in pairs(phraseToFile) do
-    if message:lower():find(phrase:lower()) then
-        debugPrint("Sending content of " .. fileName)
-        sendTextFileContent(fileName)
+    local humanoid = character:FindFirstChild("Humanoid")
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    
+    if not humanoid or not humanoidRootPart then return nil, nil, nil end
+    
+    return character, humanoid, humanoidRootPart
+end
+
+-- Function to advance the frame history
+flashback.Advance = function(self)
+    local _, humanoid, humanoidRootPart = getCharacterReferences()
+    if not humanoid or not humanoidRootPart then return end
+    
+    if #frames > settings.FlashbackLength * 60 then
+        table.remove(frames, 1)
+    end
+
+    table.insert(frames, {
+        humanoidRootPart.CFrame,
+        humanoidRootPart.Velocity,
+        humanoid:GetState(),
+        humanoid.PlatformStand
+    })
+end
+
+-- Function to rewind to previous frames
+flashback.Revert = function(self)
+    local _, humanoid, humanoidRootPart = getCharacterReferences()
+    if not humanoid or not humanoidRootPart then return end
+    
+    local frameCount = #frames
+    if frameCount == 0 then
+        self:Advance()
         return
     end
+
+    for _ = 1, settings.Speed do
+        if frameCount <= 0 then break end
+        table.remove(frames, frameCount)
+        frameCount = frameCount - 1
+    end
+
+    local lastFrame = frames[frameCount]
+    if not lastFrame then return end
+    
+    if lastFrame[1] then
+        humanoidRootPart.CFrame = lastFrame[1]
+    end
+    task.wait(settings.RewindDelay)
+    humanoidRootPart.Velocity = -lastFrame[2]
+    humanoid:ChangeState(lastFrame[3])
+    humanoid.PlatformStand = lastFrame[4]
 end
 
+-- Function to handle the flashback on render step
+local function onRenderStep()
+    local character, humanoid, humanoidRootPart = getCharacterReferences()
+    if not character or not humanoid or not humanoidRootPart then return end
     
-    -- Check for Bible references
-    local book, chapter, verses = message:match("(.-)%s(%d+):([%d,-]+)")
-    
-    if book and chapter and verses then
-        sendChatMessages(splitText(fetchBibleVerses(book:lower(), chapter, verses)))
-    else
-        debugPrint("Unrecognized message")
+    local key = Enum.KeyCode[string.upper(settings.Keybind)]
+    if not key or typeof(key) ~= "EnumItem" then
+        stopFlashback()
+        return getgenv().notify("Invalid Key!", "KeyCode seems to be invalid, try another one", settings.NotificationDuration.Error)
     end
-end)
 
-debugPrint("Client-side script loaded successfully")
+    if uis:IsKeyDown(key) then
+        flashback:Revert()
+    else
+        flashback:Advance()
+    end
+end
+
+-- Function to clean up connections
+local function cleanupConnections()
+    for _, connection in pairs(connections) do
+        if connection and typeof(connection) == "RBXScriptConnection" and connection.Connected then
+            connection:Disconnect()
+        end
+    end
+    connections = {}
+end
+
+-- Function to stop the flashback script
+local function stopFlashback()
+    if flashbacks_script then
+        pcall(function()
+            runService:UnbindFromRenderStep("FlashbackStep")
+            cleanupConnections()
+            frames = {}
+            flashbacks_script = false
+        end)
+        getgenv().notify("Flashback Disabled", "Successfully unloaded flashback script", settings.NotificationDuration.Normal)
+        return true
+    else
+        getgenv().notify("Error:", "Flashback Rewind has not been loaded.", settings.NotificationDuration.Normal)
+        return false
+    end
+end
+
+-- Function to start the flashback script
+local function startFlashback()
+    if flashbacks_script then
+        getgenv().notify("Failed", "Flashback Rewind is already running!", settings.NotificationDuration.Error)
+        return false
+    end
+
+    local key = Enum.KeyCode[string.upper(settings.Keybind)]
+    if not key then
+        getgenv().notify("Invalid Key!", "KeyCode seems to be invalid, try another one", settings.NotificationDuration.Warning)
+        return false
+    end
+    
+    -- Clear old connections and setup new ones
+    cleanupConnections()
+    frames = {}
+    
+    -- Handle character respawning
+    local characterAddedConnection = player.CharacterAdded:Connect(function(newCharacter)
+        frames = {} -- Reset frames when character respawns
+        
+        -- Wait for essential components to load
+        local humanoid = newCharacter:WaitForChild("Humanoid", 5)
+        local humanoidRootPart = newCharacter:WaitForChild("HumanoidRootPart", 5)
+        
+        if not humanoid or not humanoidRootPart then
+            getgenv().notify("Warning", "Character components not found, retrying...", settings.NotificationDuration.Warning)
+            -- Try again after a short delay
+            task.delay(1, function()
+                if not newCharacter:FindFirstChild("Humanoid") or not newCharacter:FindFirstChild("HumanoidRootPart") then
+                    getgenv().notify("Error", "Failed to find character components", settings.NotificationDuration.Error)
+                end
+            end)
+        end
+    end)
+    
+    -- Store connection for later cleanup
+    table.insert(connections, characterAddedConnection)
+    
+    -- Bind the render step
+    runService:BindToRenderStep("FlashbackStep", settings.RenderStepPriority, onRenderStep)
+    flashbacks_script = true
+    getgenv().notify("Flashback Enabled", "Hold " .. settings.Keybind .. " to rewind", settings.NotificationDuration.Normal)
+    return true
+end
+
+-- Create functions to control the script
+getgenv().FlashbackControl = {
+    Start = startFlashback,
+    Stop = stopFlashback,
+    UpdateSettings = function(newSettings)
+        for key, value in pairs(newSettings) do
+            if settings[key] ~= nil then
+                settings[key] = value
+            end
+        end
+        
+        if flashbacks_script then
+            stopFlashback()
+            startFlashback()
+        end
+        getgenv().notify("Settings Updated", "Flashback settings have been updated", settings.NotificationDuration.Normal)
+    end,
+    GetSettings = function()
+        return settings
+    end
+}
+
+-- Print usage instructions if enabled
+if settings.PrintInstructions then
+    print("Flashback Rewind Loaded!")
+    print("Current Settings:")
+    for setting, value in pairs(settings) do
+        if type(value) ~= "table" then
+            print("- " .. setting .. ": " .. tostring(value))
+        end
+    end
+    print("To update settings, use:")
+    print("- getgenv().FlashbackControl.UpdateSettings({Keybind = \"X\", Speed = 2.5})")
+    print("Or for individual settings:")
+    print("- getgenv().FlashbackControl.UpdateSettings({Keybind = \"X\"})")
+    print("- getgenv().FlashbackControl.UpdateSettings({Speed = 2.5})")
+    print("- getgenv().FlashbackControl.UpdateSettings({FlashbackLength = 120})")
+    print("To stop: getgenv().FlashbackControl.Stop()")
+    print("To start: getgenv().FlashbackControl.Start()")
+    print("To get current settings: getgenv().FlashbackControl.GetSettings()")
+end
+
+-- Start the flashback script automatically if AutoStart is true
+if settings.AutoStart then
+    startFlashback()
+end
