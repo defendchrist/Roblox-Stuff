@@ -1,0 +1,165 @@
+-- Universal Silent Aim Script (Multi-Method, Robust, Rainbow FOV)
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+-- CONFIG
+local FOV_RADIUS = 120
+local FOV_VISIBLE = true
+local SNAPLINE_VISIBLE = true
+local TEAM_CHECK = true
+local PREDICTION = true
+local PREDICTION_FACTOR = 1
+local BULLET_SPEED = 500 -- Default, adjust for your game
+
+-- Rainbow color function
+local function rainbow(t, speed)
+    speed = speed or 1.5
+    local r = math.sin(speed * t + 0) * 0.5 + 0.5
+    local g = math.sin(speed * t + 2) * 0.5 + 0.5
+    local b = math.sin(speed * t + 4) * 0.5 + 0.5
+    return Color3.new(r, g, b)
+end
+
+-- Target finder (tries Head, then HumanoidRootPart)
+local function getTarget()
+    local mousePos = UIS:GetMouseLocation()
+    local closest, closestDist = nil, FOV_RADIUS
+    for _,plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            if not TEAM_CHECK or not plr.Team or not LocalPlayer.Team or plr.Team ~= LocalPlayer.Team then
+                local part = plr.Character:FindFirstChild("Head") or plr.Character:FindFirstChild("HumanoidRootPart")
+                if part then
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                        if dist < closestDist then
+                            closest = plr
+                            closestDist = dist
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- Prediction
+local function getPredictedPosition(target)
+    local char = target.Character
+    if not char then return end
+    local part = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+    if not part then return end
+    if not PREDICTION then return part.Position end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local velocity = hrp and hrp.Velocity or Vector3.zero
+    local mousePos = UIS:GetMouseLocation()
+    local screenRay = Camera:ScreenPointToRay(mousePos.X, mousePos.Y)
+    local origin = screenRay.Origin
+    local speed = BULLET_SPEED
+    local distance = (part.Position - origin).Magnitude
+    local travelTime = distance / speed * PREDICTION_FACTOR
+    return part.Position + velocity * travelTime
+end
+
+-- VISUALS: Drawing API or BillboardGui fallback
+local Drawing = Drawing or getgenv().Drawing
+local fovCircle, snapLine, billboardFOV
+if Drawing then
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Thickness = 2
+    fovCircle.Radius = FOV_RADIUS
+    fovCircle.Transparency = 0.5
+    fovCircle.Filled = false
+    fovCircle.NumSides = 128
+    fovCircle.Visible = FOV_VISIBLE
+
+    snapLine = Drawing.new("Line")
+    snapLine.Thickness = 1.5
+    snapLine.Transparency = 0.8
+    snapLine.Visible = SNAPLINE_VISIBLE
+else
+    -- BillboardGui fallback for FOV
+    local gui = Instance.new("BillboardGui")
+    gui.Name = "SilentAimFOV"
+    gui.Size = UDim2.new(0, FOV_RADIUS*2, 0, FOV_RADIUS*2)
+    gui.AlwaysOnTop = true
+    gui.LightInfluence = 0
+    gui.StudsOffset = Vector3.new(0, 0, 0)
+    gui.Parent = game:GetService("CoreGui")
+    local frame = Instance.new("Frame", gui)
+    frame.Size = UDim2.new(1,0,1,0)
+    frame.BackgroundTransparency = 1
+    local circle = Instance.new("ImageLabel", frame)
+    circle.Size = UDim2.new(1,0,1,0)
+    circle.BackgroundTransparency = 1
+    circle.Image = "rbxassetid://4918373417" -- Transparent circle
+    circle.ImageColor3 = Color3.fromRGB(255,255,255)
+    billboardFOV = {gui=gui, circle=circle}
+end
+
+-- VISUALS UPDATE
+RunService.RenderStepped:Connect(function()
+    local t = tick()
+    local mousePos = UIS:GetMouseLocation()
+    if fovCircle then
+        fovCircle.Position = mousePos
+        fovCircle.Radius = FOV_RADIUS
+        fovCircle.Visible = FOV_VISIBLE
+        fovCircle.Color = rainbow(t, 1.5)
+    elseif billboardFOV then
+        billboardFOV.gui.Size = UDim2.new(0, FOV_RADIUS*2, 0, FOV_RADIUS*2)
+        billboardFOV.gui.StudsOffsetWorldSpace = Camera:ScreenToWorldPoint(Vector3.new(mousePos.X, mousePos.Y, 10))
+        billboardFOV.circle.ImageColor3 = rainbow(t, 1.5)
+        billboardFOV.gui.Enabled = FOV_VISIBLE
+    end
+    if snapLine then
+        local target = getTarget()
+        if SNAPLINE_VISIBLE and target and target.Character then
+            local part = target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
+            if part then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    snapLine.From = mousePos
+                    snapLine.To = Vector2.new(screenPos.X, screenPos.Y)
+                    snapLine.Visible = true
+                    snapLine.Color = rainbow(t, 1.5)
+                else
+                    snapLine.Visible = false
+                end
+            else
+                snapLine.Visible = false
+            end
+        else
+            snapLine.Visible = false
+        end
+    end
+end)
+
+-- UNIVERSAL HOOK TEMPLATE (Projectile/Remote)
+local projectileModule
+pcall(function()
+    projectileModule = m or require(game.ReplicatedStorage:FindFirstChild("Modules") and game.ReplicatedStorage.Modules:FindFirstChild("Projectile") or "Projectile")
+end)
+if projectileModule and projectileModule.SpawnBullet then
+    local old = projectileModule.SpawnBullet
+    projectileModule.SpawnBullet = function(...)
+        local args = {...}
+        local target = getTarget()
+        if target then
+            local from = (typeof(args[2]) == "Instance" and args[2].Position) or args[2]
+            local pred = getPredictedPosition(target)
+            if from and pred then
+                args[3] = CFrame.new(from, pred).LookVector
+            end
+        end
+        return old(table.unpack(args))
+    end
+else
+    warn("Projectile module not found or does not have SpawnBullet. Please hook your game's firing function manually.")
+end
+
+print("Universal Silent Aim loaded. Rainbow FOV enabled. If you see no visuals, your executor/game may not support Drawing or BillboardGui.")
